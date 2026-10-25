@@ -7,6 +7,9 @@
 //                  each an integer number of cycles and phase-aligned to one reference cycle.
 //                  The two loops bracketing the RPM are read at the shared phase and
 //                  crossfaded; load crossfades the on/off layers.
+//  Idle:           below ~1.4x idle RPM and with no throttle, a long seamless loop of a real
+//                  steady idle (the chosen idle variant) plays untouched, and crossfades into
+//                  A or B as revs or throttle rise.
 //  B "granular":   the continuous recordings with a per-frame RPM/load map. Every engine
 //                  cycle a 2-cycle Hann grain starts. It continues the previous grain's
 //                  place in the recording while that still matches the target RPM/load, so
@@ -28,7 +31,8 @@ class V8Engine extends AudioWorkletProcessor {
     this.rate = 0;            // rpm/s of the target, used by B to prefer matching slope
     this.phi = 0;
     this.cycle = 0;
-    this.A = null; this.B = null;
+    this.A = null; this.B = null; this.I = null;
+    this.idlePos = 0;
     this.grains = [];
     this.lastGrain = null;
     this.stats = { jumps: 0, conts: 0 };
@@ -38,6 +42,7 @@ class V8Engine extends AudioWorkletProcessor {
   onMsg(m) {
     if (m.type === 'bankA') this.A = prepA(m);
     else if (m.type === 'bankB') this.B = prepB(m);
+    else if (m.type === 'idle') { this.I = m; this.idlePos = 0; }
     else if (m.type === 'state') {
       this.rpmT = m.rpm; this.loadT = m.load; this.rate = m.rate || 0;
       if (m.gain !== undefined) this.gainT = m.gain;
@@ -61,12 +66,34 @@ class V8Engine extends AudioWorkletProcessor {
       this.load += (this.loadT - this.load) * kL;
       this.gain += (this.gainT - this.gain) * kG;
       this.phi += this.rpm / (120 * sampleRate);
+      // idle <-> engine crossfade (equal power)
+      let mix = 1;
+      if (this.I) {
+        const ir = this.I.rpm;
+        mix = Math.max(smooth(ir * 1.06, ir * 1.45, this.rpm), smooth(0.16, 0.42, this.load));
+      }
       let s = 0;
-      if (useA) s = this.sampleA();
-      else if (useB) s = this.sampleB();
+      if (mix > 0.001) {
+        if (useA) s = this.sampleA();
+        else if (useB) s = this.sampleB();
+        s *= Math.sin(mix * Math.PI / 2);
+      } else if (useB) {
+        this.grains.length = 0; this.lastGrain = null;
+      }
+      if (mix < 0.999) s += Math.cos(mix * Math.PI / 2) * this.sampleIdle();
       out[i] = s * this.gain;
     }
     return true;
+  }
+
+  // ---------------------------------------------------------------- idle
+  sampleIdle() {
+    const I = this.I, d = I.data, n = I.length;
+    const i = this.idlePos | 0, f = this.idlePos - i;
+    const a = d[i], b = d[i + 1 < n ? i + 1 : 0];
+    this.idlePos += (this.rpm / I.rpm) * (I.sr / sampleRate);
+    if (this.idlePos >= n) this.idlePos -= n;
+    return a + (b - a) * f;
   }
 
   // ---------------------------------------------------------------- A
@@ -117,32 +144,39 @@ class V8Engine extends AudioWorkletProcessor {
   spawnGrain() {
     const B = this.B, R = this.rpm, L = this.load, slopeT = this.rate;
     const prev = this.lastGrain;
-    let seg = -1, pos = 0;
+    let seg = -1, pos = 0, contCost = 1e9;
     if (prev) {
       const rs = rpmAt(B, prev.seg, prev.pos);
       const fi = frameAt(B, prev.seg, prev.pos);
       const sg = B.segs[prev.seg];
       const room = sg.end - prev.pos > 2.4 * (120 / rs) * B.sr;
-      const ld = sg.load[fi], sl = sg.slope[fi];
-      if (room && Math.abs(Math.log(rs / R)) < 0.045 && Math.abs(ld - L) < 0.45 &&
-          !(slopeT > 350 && sl < -150) && !(slopeT < -350 && sl > 150)) {
-        seg = prev.seg; pos = prev.pos;
-        this.stats.conts++;
+      const sl = sg.slope[fi];
+      if (room && !(slopeT > 350 && sl < -150) && !(slopeT < -350 && sl > 150)) {
+        contCost = this.cost(rs, sg.load[fi], sl, 0, R, L, slopeT);
       }
     }
-    if (seg < 0) {
-      const j = this.search(R, L, slopeT);
-      if (j < 0) return;
+    // Keep playing the recording as it is unless another moment matches clearly better:
+    // every jump is an audible splice, so continuity wins ties.
+    const j = this.search(R, L, slopeT);
+    if (j >= 0 && (contCost > 0.55 || this.bestCost < contCost - 0.25)) {
       const F = B.flat;
       seg = F.seg[j];
       const rs = F.rpm[j], ph = F.phi[j];
       pos = F.pos[j] + (Math.ceil(ph) - ph) * (120 / rs) * B.sr;   // next aligned cycle start
       this.stats.jumps++;
-    }
+    } else if (contCost < 1e9) {
+      seg = prev.seg; pos = prev.pos;
+      this.stats.conts++;
+    } else return;
     const g = { seg, pos, phi0: this.phi, end: B.segs[seg].end - 2 };
     this.grains.push(g);
     this.lastGrain = g;
     if (this.grains.length > 4) this.grains.shift();
+  }
+
+  cost(rs, ld, sl, pref, R, L, slopeT) {
+    return 10 * Math.abs(Math.log(rs / R)) + 1.6 * Math.abs(ld - L) + pref +
+      Math.min(Math.abs(sl - slopeT) / 2500, 0.5);
   }
 
   search(R, L, slopeT) {
@@ -158,6 +192,7 @@ class V8Engine extends AudioWorkletProcessor {
       cost += Math.random() * 0.04;
       if (cost < bc) { bc = cost; best = j; }
     }
+    this.bestCost = bc;
     return best;
   }
 }

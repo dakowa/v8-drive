@@ -9,7 +9,7 @@ const MODE_INFO = {
 
 // ------------------------------------------------------------------ settings
 const SETTINGS_KEY = 'v8drive.settings';
-const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, mode: 'A' };
+const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, mode: 'A', idle: 'I1' };
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch (e) { return {}; }
 }
@@ -24,7 +24,8 @@ if (hashMode === 'A' || hashMode === 'B') cfg.mode = hashMode;
 const fusion = new Fusion(cfg);
 const drive = new Drivetrain(cfg);
 const sim = new SimCar();
-let simPedal = 0, simBrake = 0;
+let simPedal = 0, simRegen = 1, simBrake = 0;
+let idles = null;            // {sr, idles:[...]} with .data loaded per variant on demand
 let ctx = null, node = null, master = null;
 let banks = null;
 let running = false;
@@ -68,15 +69,48 @@ async function fetchProgress(url, onBytes) {
   return out.buffer;
 }
 
+async function loadIdle(id, prog = () => {}) {
+  const v = idles.idles.find((x) => x.id === id);
+  if (!v.data) v.data = parseWav(await fetchProgress('audio/' + v.file, prog)).data;
+  return v;
+}
+
+async function selectIdle(id) {
+  cfg.idle = id; saveSettings();
+  renderIdlePicker();
+  const v = await loadIdle(id);
+  cfg.idleRpm = v.rpm;
+  drive.rpm = Math.max(drive.rpm, v.rpm * 0.95);
+  if (node) node.port.postMessage({ type: 'idle', sr: idles.sr, rpm: v.rpm, data: v.data, length: v.data.length - 2 });
+  renderIdlePicker();
+}
+
+function renderIdlePicker() {
+  const box = $('idlePick');
+  if (!idles) return;
+  box.innerHTML = '';
+  for (const v of idles.idles) {
+    const b = document.createElement('button');
+    b.className = 'idleBtn' + (v.id === cfg.idle ? ' on' : '');
+    b.innerHTML = `<b>${v.id}</b><span>${v.name}</span><small>${v.rpm} rpm · ${v.seconds.toFixed(0)} s loop</small>`;
+    b.addEventListener('click', () => selectIdle(v.id));
+    box.appendChild(b);
+  }
+}
+
 async function loadBanks() {
   let got = 0;
   const total = 5.5e6;
   const prog = (b) => { got += b; $('startBtn').textContent = `Loading sounds… ${Math.min(99, Math.round(got / total * 100))}%`; };
+  const ij = await fetch('audio/idles.json').then((r) => r.json());
+  idles = ij;
+  if (!ij.idles.find((v) => v.id === cfg.idle)) cfg.idle = ij.idles[0].id;
   const [aj, bj, aw, bw] = await Promise.all([
     fetch('audio/bankA.json').then((r) => r.json()),
     fetch('audio/bankB.json').then((r) => r.json()),
     fetchProgress('audio/bankA.wav', prog),
     fetchProgress('audio/bankB.wav', prog),
+    loadIdle(cfg.idle, prog),
   ]);
   return { A: { ...aj, data: parseWav(aw).data }, B: { ...bj, data: parseWav(bw).data } };
 }
@@ -110,6 +144,7 @@ async function startAudio() {
   const a = banks.A, b = banks.B;
   node.port.postMessage({ type: 'bankA', sr: a.sr, loops: a.loops, data: a.data });
   node.port.postMessage({ type: 'bankB', sr: b.sr, frame: b.frame, segments: b.segments, data: b.data });
+  await selectIdle(cfg.idle);
   ctx.onstatechange = () => updateChips();
 }
 
@@ -189,7 +224,7 @@ function tick() {
   lastTick = now;
   let v, a, aq;
   if ($('simOn').checked) {
-    sim.step(simPedal, simBrake, dt);
+    sim.step(simPedal, simBrake, dt, simRegen);
     v = sim.v; a = aq = sim.a;
   } else {
     v = fusion.v; a = fusion.aLongF; aq = fusion.aLongQ;
@@ -225,7 +260,7 @@ function logRow(now, v, a) {
 // ------------------------------------------------------------------ UI
 const ui = { v: 0, a: 0 };
 const tach = $('tach'), tc = tach.getContext('2d');
-const RPM_MAX = 6000;
+const RPM_MAX = 7000;
 
 function drawTach() {
   const W = tach.width, H = tach.height, cx = W / 2, cy = H * 0.9, R = W * 0.42;
@@ -236,7 +271,7 @@ function drawTach() {
   tc.lineWidth = 26; tc.strokeStyle = '#22262c';
   tc.beginPath(); tc.arc(cx, cy, R, a0, a1); tc.stroke();
   tc.strokeStyle = '#5a1f1f';
-  tc.beginPath(); tc.arc(cx, cy, R, ang(5500), a1); tc.stroke();
+  tc.beginPath(); tc.arc(cx, cy, R, ang(6500), a1); tc.stroke();
   const grad = tc.createLinearGradient(cx - R, 0, cx + R, 0);
   grad.addColorStop(0, '#ffb020'); grad.addColorStop(1, '#ff3d1f');
   tc.strokeStyle = cfg.mode === 'A' ? '#4aa8ff' : grad;
@@ -315,6 +350,9 @@ function initUI() {
   bindRange('gSlow', (x) => x.toFixed(2) + ' g');
   bindRange('gMed', (x) => x.toFixed(2) + ' g');
   bindRange('gFast', (x) => x.toFixed(2) + ' g');
+  bindRange('gMax', (x) => x.toFixed(2) + ' g');
+  const dm = $('downMode'); dm.value = cfg.downMode;
+  dm.addEventListener('change', () => { cfg.downMode = dm.value; saveSettings(); });
   bindRange('loadFullG', (x) => x.toFixed(2) + ' g');
   bindRange('gpsLatency', (x) => x.toFixed(2) + ' s');
   $('recal').addEventListener('click', () => { fusion.reset(); updateChips(); });
@@ -325,15 +363,19 @@ function initUI() {
 
   // simulator pedals
   const pedal = $('pedal');
+  // bottom 20% of the pedal = lift-off zone: regen from none (at the line) to level 3 (bottom)
   const setPedal = (e) => {
     const r = pedal.getBoundingClientRect();
-    simPedal = Math.min(1, Math.max(0, (r.bottom - e.clientY) / r.height));
-    $('pedalFill').style.height = (simPedal * 100) + '%';
-    $('pedalTxt').innerHTML = Math.round(simPedal * 100) + '%';
+    const p = Math.min(1, Math.max(0, (r.bottom - e.clientY) / r.height));
+    simPedal = p > 0.2 ? (p - 0.2) / 0.8 : 0;
+    simRegen = p < 0.2 ? (0.2 - p) / 0.2 : 0;
+    $('pedalFill').style.height = (p * 100) + '%';
+    $('pedalFill').classList.toggle('regen', p < 0.2);
+    $('pedalTxt').innerHTML = p >= 0.2 ? `Throttle ${Math.round(simPedal * 100)}%` : `Regen ${Math.round(simRegen * 100)}%`;
   };
   pedal.addEventListener('pointerdown', (e) => { pedal.setPointerCapture(e.pointerId); setPedal(e); if (!$('simOn').checked) $('simOn').checked = true; });
   pedal.addEventListener('pointermove', (e) => { if (e.buttons || e.pointerType === 'touch') setPedal(e); });
-  const release = () => { simPedal = 0; $('pedalFill').style.height = '0'; $('pedalTxt').innerHTML = 'Accelerator<br>drag up'; };
+  const release = () => { simPedal = 0; simRegen = 1; $('pedalFill').style.height = '0'; $('pedalTxt').innerHTML = 'Foot off · regen 3<br>drag up to accelerate'; };
   pedal.addEventListener('pointerup', release); pedal.addEventListener('pointercancel', release);
   const brake = $('brake');
   brake.addEventListener('pointerdown', (e) => { brake.setPointerCapture(e.pointerId); simBrake = 1; brake.classList.add('on'); });
@@ -390,9 +432,11 @@ setInterval(updateChips, 500);
 updateChips();
 loadBanks().then((b) => {
   banks = b;
+  cfg.idleRpm = idles.idles.find((v) => v.id === cfg.idle).rpm;
+  renderIdlePicker();
   $('startBtn').disabled = false;
   $('startBtn').textContent = 'Start engine';
 }).catch((e) => { $('startBtn').textContent = 'Failed to load sounds'; $('loadInfo').textContent = e.message; });
 
 // test hook for automated checks
-window.__v8 = { cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, setPedal: (p) => { simPedal = p; }, setBrake: (b) => { simBrake = b; } };
+window.__v8 = { cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, get idles() { return idles; }, selectIdle, setPedal: (p, r = p > 0 ? 0 : 1) => { simPedal = p; simRegen = r; }, setBrake: (b) => { simBrake = b; } };

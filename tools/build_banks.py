@@ -92,6 +92,11 @@ def main():
     segs = []
     for fid, tracks in src.items():
         x = load(fid)
+        if fid == '205511':
+            # idle/launch stretch has intermittent 2-4 kHz chirps; low-pass it, fading back by 1.45 s
+            lp = sosfiltfilt(butter(8, 1500, fs=SR, output='sos'), x)
+            w = np.clip((np.arange(len(x)) / SR - 1.25) / 0.2, 0, 1)
+            x = lp * (1 - w) + x * w
         for tr in tracks:
             segs.append(Segment(fid, x, tr))
     print('segments', [(s.fid, round(s.t0, 2), round(s.t1, 2)) for s in segs])

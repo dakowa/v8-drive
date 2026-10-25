@@ -24,14 +24,21 @@ export const TYRE_CIRC = Math.PI * (19 * 0.0254 + 2 * 0.255 * 0.40);   // 2.157 
 
 export const DEFAULTS = {
   trans: 'mt82',
-  idleRpm: 850,
+  idleRpm: 705,             // set from the chosen idle recording
   // Aggression (g of longitudinal acceleration) -> upshift RPM, as requested:
-  // slow -> 2000, medium -> 3000, fast -> 4000, interpolated in between.
-  gSlow: 0.10, gMed: 0.20, gFast: 0.32,
-  rpmSlow: 2000, rpmMed: 3000, rpmFast: 4000,
+  // slow -> 2000, medium -> 3000, fast -> 4000, maximum -> 5000, interpolated in between.
+  gSlow: 0.10, gMed: 0.20, gFast: 0.32, gMax: 0.45,
+  rpmSlow: 2000, rpmMed: 3000, rpmFast: 4000, rpmMax: 5000,
+  // Slowing down: 'follow' downshifts when revs fall below the shift point of your recent
+  // driving (2000-5000), 'fixed' always at rpmSlow (2000).
+  downMode: 'follow',
   minRpmAfterUpshift: 1150,
   downshiftRpm: 1250,       // coasting downshift; braking raises it up to +600
   loadFullG: 0.22,          // acceleration that counts as full throttle
+  // The EV can't pull 0.45 g at motorway speed (power-limited), so acceleration is judged
+  // relative to what the car can deliver at the current speed: a = P/(m v). 2021 Ioniq 5
+  // AWD: 225 kW / ~2100 kg ~ 105 W/kg; RWD 160 kW ~ 80 W/kg.
+  powerPerKg: 105,
   gpsLatency: 0.45,         // s, iPhone GPS speed lag behind reality
 };
 
@@ -220,6 +227,9 @@ export class Drivetrain {
     this.rpm = cfg.idleRpm;
     this.load = 0;
     this.aggr = 0;            // acceleration envelope (g)
+    this.sporty = 0;          // longer memory of aggr: how hard you've been driving
+    this.prevDem = 0;
+    this.kickT = 0; this.kickDem = 0; this.sinceKick = 10;
     this.shift = null;        // {from,to,t,dur,kind,rpm0}
     this.clutch = 0;          // 1 = disengaged (standing still)
     this.prevRpm = this.rpm;
@@ -234,17 +244,24 @@ export class Drivetrain {
 
   wheelRpm(v, gear) { return v / TYRE_CIRC * 60 * this.tr.ratios[gear - 1] * this.tr.final; }
 
-  shiftPoint() {
-    const c = this.cfg, a = this.aggr;
-    if (a <= c.gSlow) return c.rpmSlow;
-    if (a <= c.gMed) return lerp(c.rpmSlow, c.rpmMed, (a - c.gSlow) / (c.gMed - c.gSlow));
-    if (a <= c.gFast) return lerp(c.rpmMed, c.rpmFast, (a - c.gMed) / (c.gFast - c.gMed));
-    return c.rpmFast;
+  shiftPoint(a = this.aggr) {
+    const c = this.cfg;
+    const pts = [[c.gSlow, c.rpmSlow], [c.gMed, c.rpmMed], [c.gFast, c.rpmFast], [c.gMax, c.rpmMax]];
+    if (a <= pts[0][0]) return pts[0][1];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [g0, r0] = pts[i], [g1, r1] = pts[i + 1];
+      if (a <= g1) return lerp(r0, r1, (a - g0) / (g1 - g0));
+    }
+    return c.rpmMax;
   }
 
   // v m/s; aLoad: fast-filtered accel for throttle; aShift: smoother accel for aggression/shifts
   update(v, aLoad, dt, aShift = aLoad) {
-    const c = this.cfg, gA = aShift / G, gL = aLoad / G;
+    const c = this.cfg;
+    // effort scaling: at speed the EV runs out of power, so the same pedal gives less g
+    const gAvail = Math.min(c.gMax, c.powerPerKg / (Math.max(v, 1) * G));
+    const boost = c.gMax / Math.max(gAvail, 0.05);
+    const gA = aShift / G * (aShift > 0 ? boost : 1), gL = aLoad / G * (aLoad > 0 ? boost : 1);
     // throttle estimate: decel -> overrun, ~0 -> cruise part-throttle, accel -> up to full
     const cruise = v > 2 ? 0.25 : 0.12;
     let pedal = smoothstep(-0.035, -0.008, gL) * cruise + smoothstep(0.01, c.loadFullG, gL) * (1 - cruise);
@@ -252,10 +269,17 @@ export class Drivetrain {
     const target = Math.max(0, gA);
     const k = target > this.aggr ? 1 - Math.exp(-dt / 0.25) : 1 - Math.exp(-dt / 2.5);
     this.aggr += (target - this.aggr) * k;
+    this.sporty = Math.max(this.aggr, this.sporty * Math.exp(-dt / 8));
+    // throttle demand for kickdown, relative to the maximum-acceleration threshold
+    const dem = smoothstep(0.02, c.gMax, gL);
+    const demRate = (dem - this.prevDem) / dt;
+    this.prevDem = dem;
 
     const N = this.tr.ratios.length;
     const sp = this.shiftPoint();
     this.cruiseT = pedal > 0.1 && pedal <= 0.3 && Math.abs(gA) < 0.02 ? (this.cruiseT || 0) + dt : 0;
+    this.slowT = pedal < 0.15 && gA < -0.03 ? (this.slowT || 0) + dt : 0;
+    this.sinceUp = (this.sinceUp ?? 10) + dt;
     let rpm, load = pedal;
 
     if (this.shift) {
@@ -272,19 +296,20 @@ export class Drivetrain {
         // rev-matched downshift: blip up to the lower gear's speed
         const e = Math.sin(u * Math.PI / 2);
         rpm = lerp(s.rpm0, tgt, e);
-        load = s.kick ? pedal : (u < 0.6 ? 0.55 : 0.05);
+        load = s.kick ? Math.max(pedal, 0.8) : (u < 0.6 ? 0.55 : 0.05);
       }
       if (u >= 1) { this.gear = s.to; this.shift = null; }
     } else {
       const wr = this.wheelRpm(v, this.gear);
       // standing / crawling: clutch in (or converter), engine idles, revs with throttle
+      // clutch slip on pull-away: revs held at a launch speed until the wheels catch up
+      const launch = c.idleRpm + pedal * (1100 + 900 * smoothstep(0.1, 0.35, this.aggr));
       if (v < 1.2 && this.gear <= 1) {
         this.gear = 1;
-        const launch = c.idleRpm + pedal * (1100 + 900 * smoothstep(0.1, 0.35, this.aggr));
         rpm = Math.max(wr, launch);
         if (pedal < 0.15) load = Math.min(load, 0.12);
-      } else if (this.gear === 1 && wr < c.idleRpm + 700 * pedal) {
-        rpm = Math.max(wr, c.idleRpm + 700 * pedal);       // clutch slip on pull-away
+      } else if (this.gear === 1 && wr < launch) {
+        rpm = launch;
       } else {
         rpm = wr;
       }
@@ -293,20 +318,43 @@ export class Drivetrain {
       // upshift
       if (this.gear < N && rpm >= sp && pedal > 0.12) {
         const next = this.wheelRpm(v, this.gear + 1);
-        if (next >= c.minRpmAfterUpshift * 0.85 || rpm > c.rpmFast) this.startShift('up', this.gear + 1, rpm);
+        if (next >= c.minRpmAfterUpshift * 0.85 || rpm > c.rpmMax) this.startShift('up', this.gear + 1, rpm);
       } else if (this.gear < N && this.cruiseT > 1.2 && rpm > 2200 &&
                  this.wheelRpm(v, this.gear + 1) >= c.minRpmAfterUpshift) {
         this.startShift('up', this.gear + 1, rpm);               // short-shift when cruising
       }
-      // downshift: coasting below downshiftRpm, or kickdown when accelerating hard in a tall gear
       else if (this.gear > 1 && v > 1.2) {
         const lower = this.wheelRpm(v, this.gear - 1);
-        // braking harder -> downshift earlier (higher rpm), with a rev-matching blip
-        const downAt = c.downshiftRpm + 600 * smoothstep(0.05, 0.3, -gA);
         const intoFirst = this.gear === 2 && v > 5.5;            // nobody selects 1st above ~20 km/h
-        if (rpm < downAt && pedal < 0.3 && lower < 3200 && !intoFirst) this.startShift('down', this.gear - 1, rpm);
-        else if (pedal > 0.55 && rpm < sp * 0.55 && lower < sp * 0.9 && !intoFirst) this.startShift('down', this.gear - 1, rpm, true);
-        else if (rpm < c.minRpmAfterUpshift * 0.9) this.startShift('down', this.gear - 1, rpm, pedal > 0.3);
+        // Kickdown (from 3rd up): pressing hard while revs are far below where that demand
+        // would shift. One gear normally; two at full demand (like real multi-gear kickdowns,
+        // which are gated by high throttle), never past the gear that would exceed the target.
+        const T = this.shiftPoint(Math.max(gL, 0));
+        const fits = (g) => g >= 2 && this.wheelRpm(v, g) <= Math.min(T * 0.95, 5500);
+        const wantsKick = this.gear >= 3 && (dem >= 0.6 || (dem >= 0.4 && demRate > 2.5)) && rpm < T * 0.62;
+        // judge the pedal over 150 ms, then pick the target gear in one go (like a real TCU)
+        this.kickT = wantsKick ? this.kickT + dt : 0;
+        this.kickDem = wantsKick ? Math.max(this.kickDem, dem) : 0;
+        this.sinceKick += dt;
+        if (this.kickT >= 0.15 && this.sinceKick > 1.0) {
+          const two = this.gear >= 4 && this.kickDem >= 0.95 && fits(this.gear - 2);
+          if (two || fits(this.gear - 1)) {
+            this.startShift('down', this.gear - (two ? 2 : 1), rpm, true);
+            this.sinceKick = 0; this.kickT = 0;
+          }
+        } else if (wantsKick) {
+          // waiting for the kickdown decision
+        } else if (pedal < 0.15 && gA < -0.03 && !intoFirst && this.slowT > 0.8 && this.sinceUp > 1.5) {
+          // slowing: downshift with a rev-matching blip once revs drop below the threshold
+          // (2000-4000 following your recent driving, or fixed 2000)
+          const D = c.downMode === 'fixed' ? c.rpmSlow : Math.min(c.rpmFast, this.shiftPoint(this.sporty));
+          const downAt = Math.max(D, c.downshiftRpm + 600 * smoothstep(0.05, 0.3, -gA));
+          if (rpm < downAt && lower <= Math.min(5500, Math.max(D * 1.5, 3000))) this.startShift('down', this.gear - 1, rpm);
+        } else if (rpm < c.downshiftRpm && pedal < 0.3 && lower < 3200 && !intoFirst) {
+          this.startShift('down', this.gear - 1, rpm);
+        } else if (rpm < c.minRpmAfterUpshift * 0.9) {
+          this.startShift('down', this.gear - 1, rpm, pedal > 0.3);
+        }
       }
       if (v < 1.2 && this.gear > 1) { this.gear = 1; }
     }
@@ -320,25 +368,29 @@ export class Drivetrain {
 
   startShift(kind, to, rpm0, kick = false) {
     const a = smoothstep(0.08, 0.32, this.aggr);
-    const dur = this.tr.manual
+    let dur = this.tr.manual
       ? (kind === 'up' ? lerp(0.55, 0.28, a) : lerp(0.35, 0.22, a))
       : (kind === 'up' ? lerp(0.3, 0.16, a) : 0.2);
+    if (Math.abs(this.gear - to) > 1) dur *= 1.3;
     this.shift = { kind, to, from: this.gear, t: 0, dur, rpm0, kick };
-    this.events.push({ kind, from: this.gear, to, rpm: Math.round(rpm0) });
+    if (kind === 'up') this.sinceUp = 0;
+    this.events.push({ kind: kick ? 'kickdown' : kind, from: this.gear, to, rpm: Math.round(rpm0) });
     if (this.events.length > 20) this.events.shift();
   }
 }
 
 // ------------------------------------------------------------------ simulator (Ioniq 5 AWD-ish)
 
+export const REGEN3_G = 0.18;   // Ioniq 5 lift-off regen, level 3 (i-Pedal tops out near 0.25 g)
+
 export class SimCar {
   constructor() { this.v = 0; this.a = 0; }
-  // pedal 0..1, brake 0..1
-  step(pedal, brake, dt) {
+  // throttle 0..1, regen 0..1 (1 = foot fully off, level 3), brake 0..1
+  step(pedal, brake, dt, regenAmt = pedal > 0.02 ? 0 : 1) {
     const m = 2150, P = 239e3, Fmax = m * 5.0;
     const drive = pedal > 0 ? Math.min(Fmax, P / Math.max(this.v, 1)) * pedal : 0;
     const drag = 0.5 * 1.2 * 0.288 * 2.6 * this.v * this.v + 0.012 * m * G;
-    const regen = pedal < 0.02 && this.v > 0.5 ? 0.06 * m * G : 0;
+    const regen = this.v > 0.5 ? regenAmt * REGEN3_G * m * G * Math.min(1, this.v / 3) : 0;
     const brk = brake * 0.75 * m * G;
     let a = (drive - (this.v > 0.05 ? drag + regen + brk : 0)) / m;
     // driveline lag ~0.1 s

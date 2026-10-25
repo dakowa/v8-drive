@@ -4,7 +4,8 @@ import { Drivetrain, SimCar, DEFAULTS } from '../vehicle.js';
 
 // [time s, pedal 0..1, brake 0..1]
 export const SCRIPT = [
-  [0, 0, 0], [2.5, 0.3, 0], [14, 0, 0], [19, 0, 0.25], [21, 1.0, 0], [30, 0, 0], [33, 0, 0.5], [41, 0, 0], [43, 0, 0],
+  [0, 0, 0], [5, 0.3, 0], [15, 0.1, 0], [19, 1.0, 0], [26, 0, 0], [33, 0.1, 0], [36, 1.0, 0], [40, 0, 0],
+  [46, 0, 0.35], [49, 0, 0], [53, 0, 0],
 ];
 
 function at(script, t) {
@@ -13,19 +14,22 @@ function at(script, t) {
   return row;
 }
 
-export async function render(mode, { sr = 44100, dur = 43, banks = window.__v8.banks, upload = 'http://127.0.0.1:8766/' } = {}) {
+export async function render(mode, { sr = 44100, dur = 43, banks = window.__v8.banks, idle = null, script = SCRIPT, name = mode,
+  upload = 'http://127.0.0.1:8766/' } = {}) {
   const ctx = new OfflineAudioContext(1, Math.round(sr * dur), sr);
   await ctx.audioWorklet.addModule(new URL('../engine-worklet.js', import.meta.url));
   const node = new AudioWorkletNode(ctx, 'v8-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
   node.connect(ctx.destination);
   node.port.postMessage({ type: 'bankA', ...banks.A });
   node.port.postMessage({ type: 'bankB', ...banks.B });
-  const drive = new Drivetrain({ ...DEFAULTS });
+  const cfg = { ...DEFAULTS };
+  if (idle) { node.port.postMessage({ type: 'idle', sr: 32000, rpm: idle.rpm, data: idle.data, length: idle.data.length - 2 }); cfg.idleRpm = idle.rpm; }
+  const drive = new Drivetrain(cfg);
   const car = new SimCar();
   const step = 1 / 60;
   const trace = [];
   for (let t = 0; t < dur - step; t += step) {
-    const [, pedal, brake] = at(SCRIPT, t);
+    const [, pedal, brake] = at(script, t);
     car.step(pedal, brake, step);
     drive.update(car.v, car.a, step);
     const msg = { type: 'state', mode, rpm: drive.rpm, rate: drive.rate, load: drive.load, gain: 0.72 + 0.38 * drive.load };
@@ -36,8 +40,8 @@ export async function render(mode, { sr = 44100, dur = 43, banks = window.__v8.b
   const pcm = buf.getChannelData(0);
   const wav = toWav(pcm, sr);
   if (upload) {
-    await fetch(upload + `render_${mode}.wav`, { method: 'POST', body: wav });
-    await fetch(upload + `trace_${mode}.json`, { method: 'POST', body: JSON.stringify(trace) });
+    await fetch(upload + `render_${name}.wav`, { method: 'POST', body: wav });
+    await fetch(upload + `trace_${name}.json`, { method: 'POST', body: JSON.stringify(trace) });
   }
   let peak = 0; for (const x of pcm) peak = Math.max(peak, Math.abs(x));
   return { peak, samples: pcm.length };

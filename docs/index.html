@@ -69,6 +69,18 @@ select, input[type=text] { background: var(--panel2); color: var(--text); border
 pre#obdlog { background: #0e0f12; border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 11.5px; max-height: 160px; overflow: auto; white-space: pre-wrap; margin: 8px 0 0; }
 a { color: var(--accent2); }
 .hidden { display: none !important; }
+.idleBox { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-top: 12px; }
+.idleBox h2 { font-size: 14px; margin: 0 0 2px; }
+.idleBox p { color: var(--dim); font-size: 12.5px; margin: 0 0 10px; }
+#idlePick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.idleBtn { appearance: none; text-align: left; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 10px; font: inherit; }
+.idleBtn b { font-size: 16px; margin-right: 6px; } .idleBtn span { font-size: 13px; }
+.idleBtn small { display: block; color: var(--dim); font-size: 11.5px; margin-top: 3px; }
+.idleBtn.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.pedal .zero { position: absolute; left: 0; right: 0; bottom: 20%; border-top: 1px dashed #ffffff80; pointer-events: none; }
+.pedal .zero::after { content: "0"; position: absolute; right: 8px; top: -18px; font-size: 11px; color: #ffffffa0; }
+.pedal .rz { position: absolute; left: 0; right: 0; bottom: 0; height: 20%; background: #1d3a5a55; pointer-events: none; }
+.pedal i.regen { background: linear-gradient(180deg, #4aa8ff, #1d5f9a); }
 .load { color: var(--dim); font-size: 12.5px; text-align: center; margin-top: 8px; min-height: 18px; }
 </style>
 </head>
@@ -106,12 +118,18 @@ a { color: var(--accent2); }
 <button class="start" id="startBtn" disabled>Loading sounds…</button>
 <div class="load" id="loadInfo"></div>
 
+<div class="idleBox">
+  <h2>Idle sound</h2>
+  <p>Four real idle recordings. Pick one and listen while stopped. It applies to both A and B.</p>
+  <div id="idlePick"></div>
+</div>
+
 <details id="simBox">
   <summary>Simulator (test without driving)</summary>
   <div class="pad">
-    <div class="row"><label>Use simulator<small>Ignores sensors; on-screen pedals drive a virtual Ioniq 5.</small></label><input type="checkbox" id="simOn"></div>
+    <div class="row"><label>Use simulator<small>Ignores sensors; on-screen pedals drive a virtual Ioniq 5. Bottom 20% of the pedal (and letting go) = lift-off regen, level 3.</small></label><input type="checkbox" id="simOn"></div>
     <div class="sim">
-      <div class="pedal" id="pedal"><i id="pedalFill"></i><span id="pedalTxt">Accelerator<br>drag up</span></div>
+      <div class="pedal" id="pedal"><div class="rz"></div><i id="pedalFill"></i><div class="zero"></div><span id="pedalTxt">Foot off · regen 3<br>drag up to accelerate</span></div>
       <div class="brake" id="brake"><span>Brake</span></div>
     </div>
   </div>
@@ -126,6 +144,8 @@ a { color: var(--accent2); }
     <div class="row"><label>Gentle accel<small>Shift at 2000 rpm</small></label><input type="range" id="gSlow" min="0.04" max="0.2" step="0.01"><output id="gSlowO"></output></div>
     <div class="row"><label>Medium accel<small>Shift at 3000 rpm</small></label><input type="range" id="gMed" min="0.1" max="0.35" step="0.01"><output id="gMedO"></output></div>
     <div class="row"><label>Hard accel<small>Shift at 4000 rpm</small></label><input type="range" id="gFast" min="0.18" max="0.6" step="0.01"><output id="gFastO"></output></div>
+    <div class="row"><label>Maximum accel<small>Shift at 5000 rpm</small></label><input type="range" id="gMax" min="0.25" max="0.7" step="0.01"><output id="gMaxO"></output></div>
+    <div class="row"><label>Downshift when slowing<small>Follow = at the shift point of your recent driving</small></label><select id="downMode"><option value="follow">Follow (2000–5000)</option><option value="fixed">Fixed 2000 rpm</option></select></div>
     <div class="row"><label>Full throttle at<small>Acceleration that maps to 100%</small></label><input type="range" id="loadFullG" min="0.1" max="0.5" step="0.01"><output id="loadFullGO"></output></div>
     <div class="row"><label>GPS lag<small>Compensation for iPhone GPS speed delay</small></label><input type="range" id="gpsLatency" min="0" max="1.5" step="0.05"><output id="gpsLatencyO"></output></div>
     <div class="row"><label>Phone direction<small id="fwdInfo">Learns on first pull-away</small></label><button class="btn" id="recal">Re-learn</button></div>
@@ -161,6 +181,7 @@ a { color: var(--accent2); }
     <p><b>A: loop bank.</b> Constant-RPM loops cut from the recordings for every 200–300 rpm, on- and off-throttle. They're phase-aligned and crossfaded by RPM and throttle. This is the classic racing-game approach: steady and smooth.</p>
     <p><b>B: granular replay.</b> Plays the actual recordings continuously, choosing each engine cycle from the moment where the real car was at the same RPM and load. When your driving matches the recording, you hear it untouched, gear changes and all.</p>
     <p>Recordings: Ford Mustang GT500 by <a href="https://freesound.org/people/VacekH/" target="_blank" rel="noopener">VacekH</a> on Freesound (CC0). RPM was measured from the firing-order harmonics.</p>
+    <p>Idle recordings (Freesound): 1985 Ford Mustang 5.0 by lmbubec (CC0); Chevrolet Corvette by kyles (CC0); 1964 Chrysler Windsor by <a href="https://freesound.org/s/240671/" target="_blank" rel="noopener">lonemonk</a> (CC BY 4.0); GT500 by VacekH (CC0).</p>
     <p>Gearing: S550 Mustang GT. 10R80 ratios from Ford's chart, MT82 manual ratios from CJ Pony Parts, 255/40R19 tyres.</p>
     <p>Keep the screen on with the app open. iOS stops web audio and sensors when the screen locks.</p>
   </div>
