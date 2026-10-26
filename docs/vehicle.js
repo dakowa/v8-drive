@@ -49,7 +49,6 @@ export const DEFAULTS = {
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const lerp = (a, b, t) => a + (b - a) * t;
 const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
-const LAUNCH_MIN = 1500;   // rpm
 const v3 = {
   dot: (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
   sub: (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]],
@@ -322,9 +321,7 @@ export class Drivetrain {
         this.crawl = true;
       }
       const wr = this.wheelRpm(v, this.gear);
-      // pulling away the clutch slips at 1500 rpm or more: the recordings have no clean
-      // on-throttle sound below that (only fast sweeps)
-      const launch = Math.max(LAUNCH_MIN, c.idleRpm + 250 + pedal * (700 + 900 * smoothstep(0.1, 0.35, this.aggr)));
+      const launch = c.idleRpm + 250 + pedal * (700 + 900 * smoothstep(0.1, 0.35, this.aggr));
       if (this.crawl) {
         this.gear = 1;
         rpmT = c.idleRpm * (1.16 + 0.1 * smoothstep(0.12, 0.3, pedal));
@@ -332,7 +329,7 @@ export class Drivetrain {
       } else if (v < 1.2) {
         // pulling away from a standstill: bite immediately
         this.gear = 1;
-        rpmT = Math.max(wr, LAUNCH_MIN, c.idleRpm + pedal * (1100 + 900 * smoothstep(0.1, 0.35, this.aggr)));
+        rpmT = Math.max(wr, c.idleRpm + pedal * (1100 + 900 * smoothstep(0.1, 0.35, this.aggr)));
       } else if (this.gear === 1 && wr < launch) {
         rpmT = launch;   // clutch slip until the wheels catch up
       } else {
@@ -341,9 +338,11 @@ export class Drivetrain {
       slowSmooth = kmh < 20;
       // at low speed revs move like a clutch/converter engaging, not instantly with sensor noise
       if (slowSmooth) {
-        // rising revs follow quickly (throttle response), falling revs ease down like a clutch
+        // rising revs follow the throttle: a gentle pedal lets the clutch take up over about a
+        // second, a firm one bites at once (hard launches); falling revs ease down like a clutch
         const prev = this.prevRpm || rpmT;
-        rpm = prev + (rpmT - prev) * (1 - Math.exp(-dt / (rpmT > prev ? 0.03 : 0.18)));
+        const up = lerp(0.45, 0.03, smoothstep(0.25, 0.5, pedal));
+        rpm = prev + (rpmT - prev) * (1 - Math.exp(-dt / (rpmT > prev ? up : 0.18)));
       } else {
         rpm = rpmT;
       }
