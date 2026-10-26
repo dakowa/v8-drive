@@ -17,6 +17,20 @@ How releases are made (`tools/release.sh <N>`):
 From v9 on, the release number, the asset version and the tag are the same number. Before
 that they drifted: v4 shipped as asset version 5 and v5 as asset version 6, and there is no v6.
 
+## v10 (tag v10)
+- Gentle pull-away: the revs ease up from idle with the pedal instead of jumping from about
+  1000 to 1500 rpm in a tenth of a second. A firm or full throttle launches as before.
+- Low-rpm sound test (Settings, "Low-rpm sound (test)"), four different takes on 1100–2100 rpm,
+  everything above unchanged: **A** the GT500 as in v9 (default), **B** a Ford Galaxie V8 held
+  at steady revs 1200–1840 rpm, **C** a Chevy Caprice V8 at steady revs 1150–1550 rpm, **D** the
+  GT500's clean 2100 rpm sound slowed down below that. B and C are different engines, tone-matched
+  to the GT500. Temporary: the losers go once you pick one.
+- Upshift rpm adjustable per tier (gentle, medium, firm, max), 1500–6000 rpm, next to each
+  g slider; moving one keeps the others in order. Above 5000 rpm the sound rises more slowly
+  (the recordings end near 4400), so a 6000 shift sounds like about 5500.
+- Only real drives are recorded: nothing while the simulator is on.
+- The "Sounded wrong / great" buttons are gone; say what sounded off instead.
+
 ## v9 (tag v9)
 - One engine pitch slider again (the v5 "Pitch test" A/B is gone). Nothing plays faster than at
   pitch 1.10: the idle stays at most 1.10× its recorded speed, and above 1.10 the top end
