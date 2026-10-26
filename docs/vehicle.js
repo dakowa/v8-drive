@@ -29,9 +29,16 @@ export const DEFAULTS = {
   // slow -> 2000, medium -> 3000, fast -> 4000, maximum -> 5000, interpolated in between.
   gSlow: 0.10, gMed: 0.20, gFast: 0.32, gMax: 0.45,
   rpmSlow: 2000, rpmMed: 3000, rpmFast: 4000, rpmMax: 5000,
-  // Slowing down: 'follow' downshifts when revs fall below the shift point of your recent
-  // driving (2000-5000), 'fixed' always at rpmSlow (2000).
-  downMode: 'follow',
+  // Slowing down: rev-matched downshift once revs fall below downRpm (2000-4000), or, with
+  // downFollow, below the shift point of your recent driving.
+  downRpm: 2500,
+  downFollow: false,
+  // Sport mode: keep revs at or above sportMinRpm (0 = off) unless slower than sportBelowKmh.
+  sportMinRpm: 0,
+  sportBelowKmh: 10,
+  // Low-speed behaviour (A/B test): 'A' clutch (declutch to idle when slow, clutch slip on
+  // pull-away), 'B' in gear (engine stays coupled, rpm follows the wheels to walking pace).
+  lowSpeed: 'A',
   minRpmAfterUpshift: 1150,
   downshiftRpm: 1250,       // coasting downshift; braking raises it up to +600
   loadFullG: 0.22,          // acceleration that counts as full throttle
@@ -277,6 +284,9 @@ export class Drivetrain {
 
     const N = this.tr.ratios.length;
     const sp = this.shiftPoint();
+    const kmh = v * 3.6;
+    const sportOn = c.sportMinRpm > 0 && kmh >= c.sportBelowKmh;
+    const sportMin = sportOn ? c.sportMinRpm : 0;
     this.cruiseT = pedal > 0.1 && pedal <= 0.3 && Math.abs(gA) < 0.02 ? (this.cruiseT || 0) + dt : 0;
     this.slowT = pedal < 0.15 && gA < -0.03 ? (this.slowT || 0) + dt : 0;
     this.sinceUp = (this.sinceUp ?? 10) + dt;
@@ -301,27 +311,53 @@ export class Drivetrain {
       if (u >= 1) { this.gear = s.to; this.shift = null; }
     } else {
       const wr = this.wheelRpm(v, this.gear);
-      // standing / crawling: clutch in (or converter), engine idles, revs with throttle
-      // clutch slip on pull-away: revs held at a launch speed until the wheels catch up
-      const launch = c.idleRpm + pedal * (1100 + 900 * smoothstep(0.1, 0.35, this.aggr));
-      if (v < 1.2 && this.gear <= 1) {
-        this.gear = 1;
-        rpm = Math.max(wr, launch);
-        if (pedal < 0.15) load = Math.min(load, 0.12);
-      } else if (this.gear === 1 && wr < launch) {
-        rpm = launch;
+      let rpmT, slowSmooth = false;
+      if (c.lowSpeed === 'B') {
+        // B, in gear: coupled through to walking pace; a converter-like slip keeps revs up a
+        // little when pulling away, and the engine follows the wheels when coasting.
+        if (v < 1.2 && this.gear > 1) this.gear = 1;
+        const wr1 = this.wheelRpm(v, this.gear);
+        const stall = c.idleRpm + Math.max(pedal, 0.12) * (1100 + 900 * smoothstep(0.1, 0.35, this.aggr));
+        rpmT = Math.max(wr1, stall);
+        if (v < 1.2 && pedal < 0.15) load = Math.min(load, 0.12);
+        slowSmooth = v < 6;
       } else {
-        rpm = wr;
+        // A, clutch: below ~12 km/h off the throttle the clutch is in and the engine idles;
+        // pulling away slips the clutch at a launch speed until the wheels catch up.
+        const launch = c.idleRpm + 250 + pedal * (700 + 900 * smoothstep(0.1, 0.35, this.aggr));
+        const declutch = v < 1.2 || (kmh < 12 && pedal < 0.15 && this.gear <= 2);
+        if (declutch) {
+          if (v < 5.5) this.gear = 1;
+          // standing: same as the idle you approved (revs lift slightly with the throttle estimate)
+          rpmT = c.idleRpm + Math.max(pedal, 0.12) * (1100 + 900 * smoothstep(0.1, 0.35, this.aggr));
+          load = Math.min(load, 0.12);
+        } else if (this.gear === 1 && wr < launch) {
+          rpmT = launch;
+        } else {
+          rpmT = wr;
+        }
+        slowSmooth = kmh < 20;
+      }
+      // at low speed revs move like a clutch/converter engaging, not instantly with sensor noise
+      if (slowSmooth) {
+        const prev = this.prevRpm || rpmT;
+        rpm = prev + (rpmT - prev) * (1 - Math.exp(-dt / 0.18));
+      } else {
+        rpm = rpmT;
       }
       if (!this.tr.manual) rpm *= 1 + (0.02 + 0.08 * pedal) * smoothstep(12, 0, v);   // converter slip
 
-      // upshift
-      if (this.gear < N && rpm >= sp && pedal > 0.12) {
-        const next = this.wheelRpm(v, this.gear + 1);
-        if (next >= c.minRpmAfterUpshift * 0.85 || rpm > c.rpmMax) this.startShift('up', this.gear + 1, rpm);
-      } else if (this.gear < N && this.cruiseT > 1.2 && rpm > 2200 &&
-                 this.wheelRpm(v, this.gear + 1) >= c.minRpmAfterUpshift) {
+      // upshift (in sport mode only once the next gear still keeps revs above the minimum)
+      const nextR = this.gear < N ? this.wheelRpm(v, this.gear + 1) : 0;
+      const sportOk = nextR >= sportMin || rpm > 6300;
+      if (this.gear < N && rpm >= sp && pedal > 0.12 && sportOk) {
+        if (nextR >= c.minRpmAfterUpshift * 0.85 || rpm > c.rpmMax) this.startShift('up', this.gear + 1, rpm);
+      } else if (this.gear < N && this.cruiseT > 1.2 && rpm > Math.max(2200, sportMin * 1.25) &&
+                 nextR >= Math.max(c.minRpmAfterUpshift, sportMin)) {
         this.startShift('up', this.gear + 1, rpm);               // short-shift when cruising
+      } else if (sportOn && this.gear > 1 && rpm < sportMin && this.sinceUp > 1.0 && !this.kickT &&
+                 this.wheelRpm(v, this.gear - 1) <= 6000) {
+        this.startShift('down', this.gear - 1, rpm, pedal > 0.3);  // sport mode: stay in the band
       }
       else if (this.gear > 1 && v > 1.2) {
         const lower = this.wheelRpm(v, this.gear - 1);
@@ -347,7 +383,8 @@ export class Drivetrain {
         } else if (pedal < 0.15 && gA < -0.03 && !intoFirst && this.slowT > 0.8 && this.sinceUp > 1.5) {
           // slowing: downshift with a rev-matching blip once revs drop below the threshold
           // (2000-4000 following your recent driving, or fixed 2000)
-          const D = c.downMode === 'fixed' ? c.rpmSlow : Math.min(c.rpmFast, this.shiftPoint(this.sporty));
+          let D = c.downFollow ? Math.min(c.rpmFast, Math.max(c.downRpm, this.shiftPoint(this.sporty))) : c.downRpm;
+          D = Math.max(D, sportMin);
           const downAt = Math.max(D, c.downshiftRpm + 600 * smoothstep(0.05, 0.3, -gA));
           if (rpm < downAt && lower <= Math.min(5500, Math.max(D * 1.5, 3000))) this.startShift('down', this.gear - 1, rpm);
         } else if (rpm < c.downshiftRpm && pedal < 0.3 && lower < 3200 && !intoFirst) {
@@ -359,6 +396,10 @@ export class Drivetrain {
       if (v < 1.2 && this.gear > 1) { this.gear = 1; }
     }
     rpm = clamp(rpm, c.idleRpm * 0.95, 6500);
+    // below ~20 km/h, smooth the throttle so road bumps don't flutter the sound between idle and engine
+    if (!this.shift && v < 5.5) this.loadS = (this.loadS ?? load) + (load - (this.loadS ?? load)) * (1 - Math.exp(-dt / 0.25));
+    else this.loadS = load;
+    load = this.loadS;
     this.rate = (rpm - this.prevRpm) / dt;
     this.prevRpm = rpm;
     this.rpm = rpm;

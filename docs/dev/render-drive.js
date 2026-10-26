@@ -14,14 +14,14 @@ function at(script, t) {
   return row;
 }
 
-export async function render(mode, { sr = 44100, dur = 43, banks = window.__v8.banks, idle = null, script = SCRIPT, name = mode,
-  upload = 'http://127.0.0.1:8766/' } = {}) {
+export async function render(name, { sr = 44100, dur = 43, engine, idle = null, script = SCRIPT, lowSpeed = 'A',
+  pitch = 1, cfgOver = {}, upload = 'http://127.0.0.1:8766/' } = {}) {
   const ctx = new OfflineAudioContext(1, Math.round(sr * dur), sr);
   await ctx.audioWorklet.addModule(new URL('../engine-worklet.js', import.meta.url));
   const node = new AudioWorkletNode(ctx, 'v8-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
   node.connect(ctx.destination);
-  node.port.postMessage({ type: 'bankA', ...banks.A });
-  const cfg = { ...DEFAULTS };
+  node.port.postMessage({ type: 'bank', sr: 32000, loops: engine.loops, pulses: engine.pulses, data: engine.data });
+  const cfg = { ...DEFAULTS, lowSpeed, ...cfgOver };
   if (idle) { node.port.postMessage({ type: 'idle', sr: 32000, rpm: idle.rpm, data: idle.data, length: idle.data.length - 2 }); cfg.idleRpm = idle.rpm; }
   const drive = new Drivetrain(cfg);
   const car = new SimCar();
@@ -31,7 +31,8 @@ export async function render(mode, { sr = 44100, dur = 43, banks = window.__v8.b
     const [, pedal, brake] = at(script, t);
     car.step(pedal, brake, step);
     drive.update(car.v, car.a, step);
-    const msg = { type: 'state', mode, rpm: drive.rpm, rate: drive.rate, load: drive.load, gain: 0.72 + 0.38 * drive.load };
+    const bankMin = lowSpeed === 'B' ? Math.min(1, Math.max(0, (car.v - 0.6) / 0.6)) : 0;
+    const msg = { type: 'state', rpm: drive.rpm, pitch, bankMin, load: drive.load, gain: (0.72 + 0.38 * drive.load) * (engine.gain || 1) };
     trace.push([+t.toFixed(3), +car.v.toFixed(2), +car.a.toFixed(2), Math.round(drive.rpm), drive.gear, +drive.load.toFixed(2)]);
     ctx.suspend(t).then(() => { node.port.postMessage(msg); ctx.resume(); });
   }

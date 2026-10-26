@@ -1,12 +1,18 @@
-import { Fusion, Drivetrain, SimCar, DEFAULTS, TRANSMISSIONS, G } from './vehicle.js';
-import { Obd, clean } from './obd.js';
+import { Fusion, Drivetrain, SimCar, DEFAULTS, TRANSMISSIONS, G } from './vehicle.js?v=5';
+import { Obd, clean } from './obd.js?v=5';
+import { Recorder, DrivesView, store, normalizeImport, exportDrive } from './drives.js?v=5';
 
 const $ = (id) => document.getElementById(id);
+const VERSION = '5';   // bump with each release (also in index.html and the imports above)
 
 // ------------------------------------------------------------------ settings
 const SETTINGS_KEY = 'v8drive.settings';
-const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, idle: 'I3' };
-const SETTINGS_VERSION = 3;   // v3: engine B removed, Chrysler idle (I3) chosen as default
+const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, idle: 'I3', engine: 'gt500', idleByEngine: {}, autoRec: true };
+const SETTINGS_VERSION = 4;   // v4: engines, low-speed A/B, sport mode, downshift slider
+const AB_INFO = {
+  A: 'A · 5–15 km/h: idle recording + clutch (declutched when coasting, slipping on pull-away)',
+  B: 'B · 5–15 km/h: engine in gear: its driving sound takes over as soon as you roll',
+};
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch (e) { return {}; }
 }
@@ -14,7 +20,8 @@ function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(cfg)); } catch (e) { /* private mode */ }
 }
 const cfg = { ...DEFAULTS, ...UI_DEFAULTS, ...loadSettings() };
-if (cfg.version !== SETTINGS_VERSION) { cfg.idle = UI_DEFAULTS.idle; cfg.version = SETTINGS_VERSION; }
+if ((cfg.version || 0) < 3) cfg.idle = UI_DEFAULTS.idle;
+if ((cfg.version || 0) < 4) { delete cfg.downMode; cfg.version = SETTINGS_VERSION; }
 delete cfg.mode;
 
 // ------------------------------------------------------------------ state
@@ -23,15 +30,18 @@ const drive = new Drivetrain(cfg);
 const sim = new SimCar();
 let simPedal = 0, simRegen = 1, simBrake = 0;
 let idles = null;            // {sr, idles:[...]} with .data loaded per variant on demand
+let engines = null;          // {sr, engines:[...]} with .data loaded per engine on demand
 let ctx = null, node = null, master = null;
 let banks = null;
+const recorder = new Recorder();
+let drivesView = null;
+let lastEventN = 0;
 let running = false;
 let tickTimer = null, lastTick = 0;
 let motionCount = 0, motionRate = 0, motionT0 = 0, lastMotion = 0;
 let gpsInfo = null, gpsWatch = null;
 let wakeLock = null;
 let obd = null;
-const log = { on: false, rows: [], gps: [], t0: 0 };
 
 // ------------------------------------------------------------------ banks
 function parseWav(buf) {
@@ -66,48 +76,86 @@ async function fetchProgress(url, onBytes) {
   return out.buffer;
 }
 
+function idleList() {
+  const own = engines && curEngine().idle;
+  return [...(own ? [own] : []), ...idles.idles];
+}
+function curEngine() { return engines.engines.find((e) => e.id === cfg.engine) || engines.engines[0]; }
+
 async function loadIdle(id, prog = () => {}) {
-  const v = idles.idles.find((x) => x.id === id);
-  if (!v.data) v.data = parseWav(await fetchProgress('audio/' + v.file, prog)).data;
+  const v = idleList().find((x) => x.id === id) || idleList()[0];
+  if (!v.data) v.data = parseWav(await fetchProgress('audio/' + v.file + '?v=' + VERSION, prog)).data;
   return v;
 }
 
 async function selectIdle(id) {
-  cfg.idle = id; saveSettings();
+  const v0 = idleList().find((x) => x.id === id) || idleList()[0];
+  cfg.idle = v0.id; cfg.idleByEngine[cfg.engine] = v0.id; saveSettings();
   renderIdlePicker();
-  const v = await loadIdle(id);
+  const v = await loadIdle(v0.id);
   cfg.idleRpm = v.rpm;
   drive.rpm = Math.max(drive.rpm, v.rpm * 0.95);
   if (node) node.port.postMessage({ type: 'idle', sr: idles.sr, rpm: v.rpm, data: v.data, length: v.data.length - 2 });
-  renderIdlePicker();
 }
 
 function renderIdlePicker() {
   const box = $('idlePick');
   if (!idles) return;
   box.innerHTML = '';
-  for (const v of idles.idles) {
+  for (const v of idleList()) {
     const b = document.createElement('button');
     b.className = 'idleBtn' + (v.id === cfg.idle ? ' on' : '');
-    b.innerHTML = `<b>${v.id}</b><span>${v.name}</span><small>${v.rpm} rpm · ${v.seconds.toFixed(0)} s loop</small>`;
+    const tag = v.id.startsWith('own_') ? 'Own' : v.id;
+    b.innerHTML = `<b>${tag}</b><span>${v.name}</span><small>${v.rpm} rpm · ${v.seconds.toFixed(0)} s loop</small>`;
     b.addEventListener('click', () => selectIdle(v.id));
+    box.appendChild(b);
+  }
+}
+
+async function loadEngine(id, prog = () => {}) {
+  const e = engines.engines.find((x) => x.id === id);
+  if (!e.data) e.data = parseWav(await fetchProgress('audio/' + e.bank + '?v=' + VERSION, prog)).data;
+  return e;
+}
+
+async function selectEngine(id) {
+  cfg.engine = id; saveSettings();
+  renderEnginePicker();
+  const e = await loadEngine(id);
+  if (node) node.port.postMessage({ type: 'bank', sr: engines.sr, loops: e.loops, pulses: e.pulses, data: e.data });
+  $('engineSub').textContent = e.name + ' · EV sound';
+  $('engineCredits').textContent = 'Engine recordings: ' + engines.engines.map((x) => x.credit).join(' · ');
+  // each engine remembers its idle; by default its own idle (Chrysler for the Mustang)
+  await selectIdle(cfg.idleByEngine[id] || (e.idle ? e.idle.id : 'I3'));
+  renderEnginePicker();
+}
+
+function renderEnginePicker() {
+  const box = $('enginePick');
+  if (!engines) return;
+  box.innerHTML = '';
+  for (const e of engines.engines) {
+    const b = document.createElement('button');
+    b.className = 'idleBtn' + (e.id === cfg.engine ? ' on' : '');
+    const top = Math.max(...e.loops.map((l) => l.rpm));
+    b.innerHTML = `<span>${e.name}</span><small>recorded up to ${Math.round(top / 100) * 100} rpm${e.data ? '' : ' · tap to load'}</small>`;
+    b.addEventListener('click', () => selectEngine(e.id));
     box.appendChild(b);
   }
 }
 
 async function loadBanks() {
   let got = 0;
-  const total = 3.4e6;
+  const total = 3.5e6;
   const prog = (b) => { got += b; $('startBtn').textContent = `Loading sounds… ${Math.min(99, Math.round(got / total * 100))}%`; };
-  const ij = await fetch('audio/idles.json').then((r) => r.json());
-  idles = ij;
-  if (!ij.idles.find((v) => v.id === cfg.idle)) cfg.idle = ij.idles[0].id;
-  const [aj, aw] = await Promise.all([
-    fetch('audio/bankA.json').then((r) => r.json()),
-    fetchProgress('audio/bankA.wav', prog),
-    loadIdle(cfg.idle, prog),
+  [idles, engines] = await Promise.all([
+    fetch('audio/idles.json?v=' + VERSION).then((r) => r.json()),
+    fetch('audio/engines.json?v=' + VERSION).then((r) => r.json()),
   ]);
-  return { A: { ...aj, data: parseWav(aw).data } };
+  if (!engines.engines.find((e) => e.id === cfg.engine)) cfg.engine = 'gt500';
+  if (!idleList().find((v) => v.id === cfg.idle)) cfg.idle = curEngine().idle ? curEngine().idle.id : 'I3';
+  await Promise.all([loadEngine(cfg.engine, prog), loadIdle(cfg.idle, prog)]);
+  return true;
 }
 
 // ------------------------------------------------------------------ audio
@@ -129,16 +177,14 @@ async function startAudio() {
   ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
   const resumed = ctx.resume();
   await resumed;
-  await ctx.audioWorklet.addModule('engine-worklet.js');
+  await ctx.audioWorklet.addModule('engine-worklet.js?v=' + VERSION);
   node = new AudioWorkletNode(ctx, 'v8-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
   master = ctx.createGain();
   master.gain.value = cfg.vol;
   const comp = ctx.createDynamicsCompressor();
   comp.threshold.value = -8; comp.knee.value = 6; comp.ratio.value = 6; comp.attack.value = 0.003; comp.release.value = 0.15;
   node.connect(master).connect(comp).connect(ctx.destination);
-  const a = banks.A;
-  node.port.postMessage({ type: 'bankA', sr: a.sr, loops: a.loops, data: a.data });
-  await selectIdle(cfg.idle);
+  await selectEngine(cfg.engine);
   ctx.onstatechange = () => updateChips();
 }
 
@@ -161,7 +207,7 @@ function startGps() {
     const c = pos.coords;
     gpsInfo = { t: now, acc: c.accuracy, speed: c.speed };
     fusion.gps(tFix, c.speed, c.accuracy);
-    if (log.on) log.gps.push([+(now - log.t0).toFixed(3), c.speed, Math.round(c.accuracy), c.heading]);
+    recorder.gps(now, c);
   }, (err) => { gpsInfo = { err: err.message }; updateChips(); },
   { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
 }
@@ -193,11 +239,15 @@ async function start() {
   else $('loadInfo').textContent = 'Motion access denied. Use the simulator, or allow Motion & Orientation access in Safari settings.';
   requestWakeLock();
   running = true;
+  if (cfg.autoRec && !recorder.active) {
+    recorder.start({ engine: cfg.engine, lowSpeed: cfg.lowSpeed, sim: $('simOn').checked, settings: { ...cfg, idleByEngine: undefined } });
+  }
   btn.disabled = false; btn.textContent = 'Stop'; btn.classList.add('stop');
 }
 
 function stop() {
   running = false;
+  recorder.stop().then(() => drivesView && drivesView.refresh());
   sendState(true);
   const btn = $('startBtn');
   btn.textContent = 'Start engine'; btn.classList.remove('stop');
@@ -224,31 +274,28 @@ function tick() {
     v = fusion.v; a = fusion.aLongF; aq = fusion.aLongQ;
   }
   drive.update(v, aq, dt, a);
-  sendState(false);
-  if (log.on) logRow(now, v, a);
+  sendState(false, v);
+  if (recorder.active) {
+    recorder.row(now, v, a, $('simOn').checked ? a : fusion.aLong, drive);
+    if (drive.events.length !== lastEventN || drive.events[drive.events.length - 1] !== recorder.lastEv) {
+      const e = drive.events[drive.events.length - 1];
+      if (e && e !== recorder.lastEv) { recorder.event(now, e); recorder.lastEv = e; }
+      lastEventN = drive.events.length;
+    }
+  }
   ui.v = v; ui.a = a;
 }
 
-function sendState(silence) {
+function sendState(silence, v = 0) {
   if (!node) return;
   const on = running && !silence;
+  // low-speed B: the engine's in-gear sound takes over from the idle recording once rolling
+  const bankMin = cfg.lowSpeed === 'B' ? Math.min(1, Math.max(0, (v - 0.6) / 0.6)) : 0;
   node.port.postMessage({
-    type: 'state',
-    rpm: drive.rpm * cfg.pitch, rate: drive.rate * cfg.pitch,
-    load: drive.load, gain: on ? 0.72 + 0.38 * drive.load : 0,
+    type: 'state', bankMin,
+    rpm: drive.rpm, pitch: cfg.pitch,
+    load: drive.load, gain: on ? (0.72 + 0.38 * drive.load) * (engines ? curEngine().gain || 1 : 1) : 0,
   });
-}
-
-let lastLog = 0;
-function logRow(now, v, a) {
-  if (now - lastLog < 0.04) return;
-  lastLog = now;
-  const f = fusion;
-  log.rows.push([+(now - log.t0).toFixed(3), +v.toFixed(3), +a.toFixed(3), +f.aLong.toFixed(3),
-    Math.round(drive.rpm), drive.gear, +drive.load.toFixed(2), +drive.aggr.toFixed(3),
-    f.g ? f.g.map((x) => +x.toFixed(2)) : null, f.fwd ? f.fwd.map((x) => +x.toFixed(3)) : null,
-    f.handling ? 1 : 0, +f.bias.toFixed(3)]);
-  if (log.rows.length % 250 === 0) $('logInfo').textContent = `Recording · ${log.rows.length} rows · ${log.gps.length} GPS fixes`;
 }
 
 // ------------------------------------------------------------------ UI
@@ -323,7 +370,46 @@ function bindRange(id, fmt, onChange) {
   el.addEventListener('input', () => { cfg[id] = +el.value; show(); saveSettings(); onChange && onChange(); });
 }
 
+function bindCheck(id, onChange) {
+  const el = $(id);
+  el.checked = !!cfg[id];
+  el.addEventListener('change', () => { cfg[id] = el.checked; saveSettings(); onChange && onChange(); });
+}
+
+function setAB(m) {
+  cfg.lowSpeed = m; saveSettings();
+  document.querySelectorAll('.ab button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
+  $('abInfo').textContent = AB_INFO[m];
+}
+
+function showPage(id) {
+  document.querySelectorAll('.page').forEach((p) => p.classList.toggle('hidden', p.id !== id));
+  document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.p === id));
+  if (id === 'drivesPage') {
+    if (!drivesView) drivesView = new DrivesView($('drivesPage'), () => cfg);
+    drivesView.refresh();
+    if (drivesView.drive) drivesView.renderMap().then(() => drivesView.map && drivesView.map.invalidateSize());
+  }
+}
+
 function initUI() {
+  document.querySelectorAll('.ab button').forEach((b) => b.addEventListener('click', () => setAB(b.dataset.m)));
+  setAB(cfg.lowSpeed || 'A');
+  document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => showPage(b.dataset.p)));
+  bindCheck('autoRec');
+  document.querySelectorAll('.metricBtn').forEach((b) => b.addEventListener('click', () => drivesView && drivesView.setMetric(b.dataset.m)));
+  $('driveExport').addEventListener('click', () => drivesView && drivesView.drive && exportDrive(drivesView.drive));
+  $('driveDelete').addEventListener('click', () => { if (drivesView && drivesView.drive && confirm('Delete this drive?')) drivesView.remove(); });
+  $('importFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const d = normalizeImport(JSON.parse(await f.text()));
+      const id = await store.importDrive(d);
+      if (!drivesView) drivesView = new DrivesView($('drivesPage'), () => cfg);
+      await drivesView.open(id);
+    } catch (err) { alert('Import failed: ' + err.message); }
+    e.target.value = '';
+  });
   $('startBtn').addEventListener('click', () => (running ? stop() : start()));
   const sel = $('trans');
   for (const [k, t] of Object.entries(TRANSMISSIONS)) sel.add(new Option(t.name, k));
@@ -335,8 +421,14 @@ function initUI() {
   bindRange('gMed', (x) => x.toFixed(2) + ' g');
   bindRange('gFast', (x) => x.toFixed(2) + ' g');
   bindRange('gMax', (x) => x.toFixed(2) + ' g');
-  const dm = $('downMode'); dm.value = cfg.downMode;
-  dm.addEventListener('change', () => { cfg.downMode = dm.value; saveSettings(); });
+  bindRange('downRpm', (x) => x + ' rpm');
+  bindCheck('downFollow');
+  const sm = $('sportMinRpm'), smO = $('sportMinRpmO');
+  sm.value = cfg.sportMinRpm || 1500;
+  const smShow = () => { smO.textContent = +sm.value < 2000 ? 'Off' : sm.value + ' rpm'; };
+  smShow();
+  sm.addEventListener('input', () => { cfg.sportMinRpm = +sm.value < 2000 ? 0 : +sm.value; smShow(); saveSettings(); });
+  bindRange('sportBelowKmh', (x) => x + ' km/h');
   bindRange('loadFullG', (x) => x.toFixed(2) + ' g');
   bindRange('gpsLatency', (x) => x.toFixed(2) + ' s');
   $('recal').addEventListener('click', () => { fusion.reset(); updateChips(); });
@@ -365,26 +457,6 @@ function initUI() {
   brake.addEventListener('pointerdown', (e) => { brake.setPointerCapture(e.pointerId); simBrake = 1; brake.classList.add('on'); });
   const bUp = () => { simBrake = 0; brake.classList.remove('on'); };
   brake.addEventListener('pointerup', bUp); brake.addEventListener('pointercancel', bUp);
-
-  // drive log
-  $('logOn').addEventListener('change', (e) => {
-    log.on = e.target.checked;
-    if (log.on) { log.rows = []; log.gps = []; log.t0 = performance.now() / 1000; $('logInfo').textContent = 'Recording…'; }
-    else $('logInfo').textContent = `Stopped · ${log.rows.length} rows`;
-  });
-  $('logExport').addEventListener('click', () => {
-    const d = new Date();
-    const name = `v8drive-${d.toISOString().slice(0, 16).replace(/[-:T]/g, '')}.json`;
-    const payload = {
-      app: 'v8drive', version: 1, started: new Date(Date.now() - (performance.now() / 1000 - log.t0) * 1000).toISOString(),
-      settings: cfg, ua: navigator.userAgent,
-      columns: ['t', 'v', 'aUsed', 'aLongRaw', 'rpm', 'gear', 'load', 'aggr', 'gravity', 'fwd', 'handling', 'bias'],
-      gpsColumns: ['t', 'speed', 'acc', 'heading'], rows: log.rows, gps: log.gps, shifts: drive.events,
-    };
-    const url = URL.createObjectURL(new Blob([JSON.stringify(payload)], { type: 'application/json' }));
-    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-  });
 
   // OBD2
   if (Obd.available()) { $('obdNo').classList.add('hidden'); $('obdYes').classList.remove('hidden'); }
@@ -416,11 +488,14 @@ setInterval(updateChips, 500);
 updateChips();
 loadBanks().then((b) => {
   banks = b;
-  cfg.idleRpm = idles.idles.find((v) => v.id === cfg.idle).rpm;
+  cfg.idleRpm = idleList().find((v) => v.id === cfg.idle).rpm;
+  renderEnginePicker();
   renderIdlePicker();
+  $('engineSub').textContent = curEngine().name + ' · EV sound';
+  $('engineCredits').textContent = 'Engine recordings: ' + engines.engines.map((x) => x.credit).join(' · ');
   $('startBtn').disabled = false;
   $('startBtn').textContent = 'Start engine';
 }).catch((e) => { $('startBtn').textContent = 'Failed to load sounds'; $('loadInfo').textContent = e.message; });
 
 // test hook for automated checks
-window.__v8 = { cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, get idles() { return idles; }, selectIdle, setPedal: (p, r = p > 0 ? 0 : 1) => { simPedal = p; simRegen = r; }, setBrake: (b) => { simBrake = b; } };
+window.__v8 = { cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, get idles() { return idles; }, get engines() { return engines; }, selectIdle, selectEngine, recorder, get drivesView() { return drivesView; }, store, setPedal: (p, r = p > 0 ? 0 : 1) => { simPedal = p; simRegen = r; }, setBrake: (b) => { simBrake = b; } };
