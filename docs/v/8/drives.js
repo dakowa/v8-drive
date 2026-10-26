@@ -4,7 +4,7 @@
 // Drives leave the phone only if the user turns on upload (to their own private GitHub repo)
 // or sends one from the Drives tab.
 
-const DB = 'v8drive', VER = 1;
+const DB = 'v8drive.v8', VER = 1;
 // rows (25 Hz): fused speed, aLongF (a), raw aLong, rpm, gear, load, aggression, aLongQ (aq:
 // what the drivetrain's load used), shift (1 while a gear change is in progress)
 const ROW_COLS = ['t', 'v', 'a', 'aRaw', 'rpm', 'gear', 'load', 'aggr', 'aq', 'shift'];

@@ -1,0 +1,13 @@
+{
+ "sr": 32000,
+ "idles": [
+  {
+   "id": "I3",
+   "name": "Chrysler V8 at the tailpipe",
+   "rpm": 805,
+   "file": "idle_I3.wav",
+   "credit": "lonemonk, Freesound, CC BY 4.0",
+   "seconds": 28.88
+  }
+ ]
+}

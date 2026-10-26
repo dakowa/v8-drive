@@ -1,15 +1,17 @@
 # Changelog
 
-Every release is a git tag (`v1`, `v2`, …). The release before the current one stays
-playable on the phone at https://dakowa.github.io/v8-drive/prev/ (the version badge in the
-header links to it), so a new feature can be compared with the old one, or abandoned, in one tap.
+Every release is a git tag (`v1`, `v2`, …), and every earlier release stays playable on the
+phone at https://dakowa.github.io/v8-drive/v/N/ (e.g. `/v/3/`). The list of all of them is at
+https://dakowa.github.io/v8-drive/v/, which the version badge in the header opens. Each archived
+release keeps its own settings and drives, so it sounds exactly as it shipped.
 
 How releases are made (`tools/release.sh <N>`):
 
 - Each feature is its own commit and never touches the `?v=` strings, so `git revert <commit>`
   undoes exactly that feature.
 - The release commit bumps the asset version (`?v=N`, `VERSION` in app.js), rebuilds
-  `docs/prev/` from the previous tag, and is tagged `vN`.
+  `docs/v/` (`tools/build_versions.py`: earlier releases from their tags, the list from this
+  file), and is tagged `vN`.
 - Each drive log records `appVersion`, so analysis knows which release was driven.
 
 From v9 on, the release number, the asset version and the tag are the same number. Before
@@ -27,8 +29,8 @@ that they drifted: v4 shipped as asset version 5 and v5 as asset version 6, and 
 - The 1100–2100 rpm loops are re-picked for the least RPM drift within each loop; 2350 rpm
   and up are unchanged.
 - Idle picker back, as in v3: I3 Chrysler (default) or I1 Mustang 5.0.
-- Version control: release tags, this changelog, the previous release playable at /prev/
-  (version badge in the header).
+- Version control: release tags, this changelog, every earlier release playable at /v/N/ with
+  its own settings and drives, listed at /v/ (version badge in the header).
 - A second, fully recorded engine was looked for and not added: the best candidate (a Ford
   Galaxie V8 with steady free-revs) has gaps of 18–38% between its recorded speeds and no
   on-throttle sound, so it would have needed stretching or stitching.

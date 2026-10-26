@@ -10,8 +10,9 @@ const VERSION = '9';   // bump with each release (also in index.html and the imp
 const SETTINGS_KEY = 'v8drive.settings';
 const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, autoRec: true, sound: 'I3' };
 const SETTINGS_VERSION = 6;   // v9: idle picker back (cfg.sound), pitch and low-speed A/B retired
-// Settings earlier releases used. Deleted on every load, not once: the previous release at
-// /prev/ shares this storage and may write them back.
+// Settings earlier releases used. Deleted on every load, not once: v1-v8 and the /prev/ copy
+// of v8 shipped before the archive (docs/v/) gave old releases their own storage, and may still
+// have written them back.
 const RETIRED = ['mode', 'engine', 'idle', 'idleByEngine', 'lowSpeed', 'pitchMode', 'downMode'];
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch (e) { return {}; }
@@ -409,15 +410,11 @@ function showPage(id) {
   }
 }
 
-// The previous release stays playable at prev/ (tools/release.sh), one tap away.
+// Every earlier release stays playable at v/<N>/ (tools/build_versions.py); the badge opens the list.
 function initVersion() {
   const a = $('verLink');
-  a.textContent = 'v' + VERSION;
-  const inPrev = /\/prev\/(index\.html)?$/.test(location.pathname);
-  fetch((inPrev ? '../' : '') + 'versions.json', { cache: 'no-store' }).then((r) => r.json()).then((j) => {
-    if (inPrev) { a.href = '../'; a.textContent = `v${VERSION} (previous) · back to v${j.current}`; }
-    else if (j.prev) { a.href = 'prev/'; a.textContent = `v${VERSION} · try v${j.prev}`; }
-  }).catch(() => {});
+  a.href = /\/v\/\d+\/(index\.html)?$/.test(location.pathname) ? '../' : 'v/';
+  a.textContent = `v${VERSION} · all versions`;
 }
 
 function initUI() {

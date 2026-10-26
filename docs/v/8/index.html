@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b0c0e">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-512.png">
+<title>V8 Drive</title>
+<style>
+:root {
+  --bg: #0b0c0e; --panel: #15171b; --panel2: #1c1f24; --line: #2a2e35;
+  --text: #eef0f3; --dim: #8b929c; --accent: #ff5a1f; --accent2: #ffb020;
+  --ok: #3ecf8e; --warn: #f5b942; --bad: #ff5d5d; --a: #4aa8ff; --b: #ff5a1f;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+body { padding: max(12px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); max-width: 560px; margin: 0 auto; overscroll-behavior: none; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+h1 { font-size: 17px; margin: 0; letter-spacing: .2px; }
+h1 small { display: block; color: var(--dim); font-weight: 400; font-size: 12px; }
+.gauge { position: relative; background: radial-gradient(120% 90% at 50% 100%, #1a1d22 0%, #0f1013 70%); border: 1px solid var(--line); border-radius: 20px; padding: 6px 6px 14px; }
+canvas#tach { width: 100%; display: block; aspect-ratio: 2 / 1.12; }
+.readout { display: grid; grid-template-columns: 1fr 1fr 1fr; text-align: center; margin-top: -6px; }
+.readout b { display: block; font-size: 34px; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.readout span { color: var(--dim); font-size: 11.5px; text-transform: uppercase; letter-spacing: .8px; }
+.bars { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 2px 0; }
+.bar { height: 6px; background: var(--panel2); border-radius: 3px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .05s linear; }
+.bar.g i { background: var(--accent2); }
+.barlbl { display: flex; justify-content: space-between; color: var(--dim); font-size: 11px; margin-top: 3px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+.chip { font-size: 12px; padding: 4px 9px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--dim); }
+.chip::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #555; margin-right: 6px; vertical-align: 1px; }
+.chip.ok::before { background: var(--ok); } .chip.warn::before { background: var(--warn); } .chip.bad::before { background: var(--bad); }
+.start { width: 100%; height: 60px; border: 0; border-radius: 16px; font-size: 19px; font-weight: 700; background: var(--accent); color: #1a0700; }
+.start.stop { background: var(--panel2); color: var(--text); border: 1px solid var(--line); }
+.start:disabled { opacity: .5; }
+details { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; margin-top: 12px; }
+summary { padding: 14px 16px; font-weight: 600; list-style: none; cursor: pointer; display: flex; justify-content: space-between; }
+summary::after { content: "›"; color: var(--dim); transform: rotate(90deg); transition: transform .2s; }
+details[open] summary::after { transform: rotate(270deg); }
+summary::-webkit-details-marker { display: none; }
+.pad { padding: 0 16px 16px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.row:first-child { border-top: 0; }
+.row label { color: var(--text); font-size: 14px; }
+.row small { color: var(--dim); display: block; font-size: 12px; }
+.row output { color: var(--dim); font-variant-numeric: tabular-nums; min-width: 54px; text-align: right; font-size: 13px; }
+input[type=range] { width: 46%; accent-color: var(--accent); }
+select, input[type=text], input[type=password] { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 14px; max-width: 60%; }
+.btn { appearance: none; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px; font-size: 14px; font-weight: 600; }
+.btn.primary { background: var(--accent); color: #1a0700; border-color: transparent; }
+.sim { display: grid; grid-template-columns: 1fr 96px; gap: 10px; margin-top: 4px; }
+#simBox summary { padding: 10px 16px; }
+.pedal { position: relative; height: 150px; border-radius: 16px; background: linear-gradient(180deg, #2a1a12, #15171b); border: 1px solid var(--line); touch-action: none; user-select: none; -webkit-user-select: none; overflow: hidden; }
+.pedal i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: linear-gradient(180deg, var(--accent2), var(--accent)); opacity: .85; }
+.pedal span, .brake span { position: absolute; inset: 0; display: grid; place-items: center; font-weight: 700; color: #fff; text-shadow: 0 1px 3px #000; pointer-events: none; }
+.brake { position: relative; border-radius: 16px; background: #24161a; border: 1px solid var(--line); touch-action: none; user-select: none; -webkit-user-select: none; }
+.brake.on { background: #7a1f2a; }
+.note { color: var(--dim); font-size: 12.5px; margin: 8px 0 0; }
+pre#obdlog { background: #0e0f12; border: 1px solid var(--line); border-radius: 8px; padding: 8px; font-size: 11.5px; max-height: 160px; overflow: auto; white-space: pre-wrap; margin: 8px 0 0; }
+a { color: var(--accent2); }
+.hidden { display: none !important; }
+.idleBox { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-top: 12px; }
+.idleBox h2 { font-size: 14px; margin: 0 0 2px; }
+.idleBox p { color: var(--dim); font-size: 12.5px; margin: 0 0 10px; }
+#idlePick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.idleBtn { appearance: none; text-align: left; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 10px; font: inherit; }
+.idleBtn b { font-size: 16px; margin-right: 6px; } .idleBtn span { font-size: 13px; }
+.idleBtn small { display: block; color: var(--dim); font-size: 11.5px; margin-top: 3px; }
+.idleBtn.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.pedal .zero { position: absolute; left: 0; right: 0; bottom: 20%; border-top: 1px dashed #ffffff80; pointer-events: none; }
+.pedal .zero::after { content: "0"; position: absolute; right: 8px; top: -18px; font-size: 11px; color: #ffffffa0; }
+.pedal .rz { position: absolute; left: 0; right: 0; bottom: 0; height: 20%; background: #1d3a5a55; pointer-events: none; }
+.pedal i.regen { background: linear-gradient(180deg, #4aa8ff, #1d5f9a); }
+.load { color: var(--dim); font-size: 12.5px; text-align: center; margin-top: 8px; min-height: 18px; }
+
+.tabs { display: flex; gap: 6px; }
+.tabs button, .ab button { appearance: none; border: 1px solid var(--line); background: var(--panel); color: var(--dim); font-weight: 650; font-size: 14px; height: 34px; padding: 0 12px; border-radius: 10px; }
+.tabs button.on { color: var(--text); border-color: var(--accent); }
+.ab { display: flex; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 2px; }
+.ab button { border: 0; background: transparent; width: 40px; height: 30px; padding: 0; font-size: 16px; }
+.ab button.on[data-m="A"] { background: #4aa8ff; color: #04121f; }
+.ab button.on[data-m="B"] { background: var(--accent); color: #1f0a02; }
+.abInfo { color: var(--dim); font-size: 12px; margin: -4px 0 8px; min-height: 16px; }
+.hdrR { display: flex; gap: 8px; align-items: center; }
+#enginePick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.page.hidden { display: none; }
+.driveItem { display: block; width: 100%; text-align: left; appearance: none; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-top: 8px; font: inherit; }
+.driveItem b { display: block; font-size: 14px; } .driveItem span { color: var(--dim); font-size: 12px; }
+.driveItem.on { border-color: var(--accent); }
+#driveMap .darkTiles { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.85) saturate(0.6); }
+#driveMap { height: 360px; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #111; margin-top: 10px; }
+.mapEmpty { display: grid; place-items: center; height: 100%; color: var(--dim); font-size: 13px; padding: 20px; text-align: center; }
+.metrics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.metricBtn { appearance: none; background: var(--panel2); color: var(--dim); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; }
+.metricBtn.on { color: var(--text); border-color: var(--accent); }
+#mapLegend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; color: var(--dim); font-size: 11.5px; }
+#mapLegend i, .bandLbl i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+#driveChart { width: 100%; height: 300px; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; margin-top: 10px; touch-action: none; }
+#cursorInfo { color: var(--dim); font-size: 12px; margin-top: 6px; min-height: 16px; font-variant-numeric: tabular-nums; }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+.tiles div { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px; text-align: center; }
+.tiles b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; } .tiles span { color: var(--dim); font-size: 10.5px; }
+.bandTitle { color: var(--dim); font-size: 12px; margin: 12px 0 4px; }
+.bands { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--panel2); }
+.bandLbl { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--dim); font-size: 11.5px; margin-top: 6px; }
+.rowBtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.marks { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.marks button { appearance: none; height: 64px; border-radius: 16px; font: inherit; font-size: 17px; font-weight: 700; color: var(--text); background: #2a1d3a; border: 1px solid #5b3d80; }
+.marks button#markGood { background: #15302a; border-color: #2f6b55; }
+.marks button.flash { filter: brightness(2); }
+.upBox .row.stack { flex-wrap: wrap; }
+.upBox .row.stack input { max-width: none; width: 100%; flex: 1 1 100%; min-width: 0; }
+@media (max-width: 380px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body><a href="../../" style="display:block;padding:10px 16px;margin:0 0 6px;border-radius:12px;background:#3a2a10;color:#ffcf80;font:600 14px system-ui;text-align:center;text-decoration:none">You're on v8, an older release · back to the current version</a><a href="../" style="display:block;margin:0 0 12px;color:#ffb020;font:13px system-ui;text-align:center">All versions</a>
+<header>
+  <h1>V8 Drive<small id="engineSub">Real engine recordings · EV sound</small></h1>
+  <div class="hdrR">
+    <div class="ab" id="lowAb" role="tablist" aria-label="Low-speed test"><button data-m="A" role="tab">A</button><button data-m="B" role="tab">B</button></div>
+    <div class="tabs"><button data-p="drivePage" class="on">Drive</button><button data-p="drivesPage">Drives</button></div>
+  </div>
+</header>
+<div class="abInfo" id="abInfo"></div>
+
+<section class="page" id="drivePage">
+<div class="gauge">
+  <canvas id="tach" width="1000" height="560"></canvas>
+  <div class="readout">
+    <div><b id="gear">N</b><span>Gear</span></div>
+    <div><b id="spd">0</b><span>km/h</span></div>
+    <div><b id="shiftAt">2000</b><span>Shift at</span></div>
+  </div>
+  <div class="bars">
+    <div><div class="bar"><i id="loadBar"></i></div><div class="barlbl"><span>Throttle</span><span id="loadTxt">0%</span></div></div>
+    <div><div class="bar g"><i id="accBar"></i></div><div class="barlbl"><span>Accel</span><span id="accTxt">0.00 g</span></div></div>
+  </div>
+</div>
+
+<details id="simBox" open>
+  <summary>Simulator (test without driving)</summary>
+  <div class="pad">
+    <div class="row"><label>Use simulator<small>Ignores sensors. Bottom 20% of the pedal, or letting go = regen level 3.</small></label><input type="checkbox" id="simOn"></div>
+    <div class="sim">
+      <div class="pedal" id="pedal"><div class="rz"></div><i id="pedalFill"></i><div class="zero"></div><span id="pedalTxt">Foot off · regen 3<br>drag up to accelerate</span></div>
+      <div class="brake" id="brake"><span>Brake</span></div>
+    </div>
+  </div>
+</details>
+
+<div class="chips">
+  <span class="chip" id="cAudio">Audio</span>
+  <span class="chip" id="cMotion">Motion</span>
+  <span class="chip" id="cGps">GPS</span>
+  <span class="chip" id="cFwd">Direction</span>
+  <span class="chip" id="cObd">OBD2 off</span>
+</div>
+
+<button class="start" id="startBtn" disabled>Loading sounds…</button>
+<div class="marks"><button id="markBad">Sounded wrong</button><button id="markGood">Sounded great</button></div>
+<div class="load" id="markInfo">Tap a mark the moment the sound is off (or spot on). It goes into the drive log for analysis.</div>
+<div class="load" id="loadInfo"></div>
+
+<details>
+  <summary>Settings</summary>
+  <div class="pad" id="settings">
+    <div class="row"><label>Gearbox<small>Mustang GT ratios</small></label><select id="trans"></select></div>
+    <div class="row"><label>Volume</label><input type="range" id="vol" min="0" max="1.5" step="0.01"><output id="volO"></output></div>
+    <div class="row"><label>Engine pitch<small>Scales RPM→sound. 1.00 = measured</small></label><input type="range" id="pitch" min="0.7" max="1.4" step="0.01"><output id="pitchO"></output></div>
+    <div class="row"><label>Pitch test<small id="pitchAbInfo"></small></label><div class="ab" id="pitchAb"><button data-m="A">A</button><button data-m="B">B</button></div></div>
+    <div class="row"><label>Gentle accel<small>Shift at 2000 rpm</small></label><input type="range" id="gSlow" min="0.04" max="0.2" step="0.01"><output id="gSlowO"></output></div>
+    <div class="row"><label>Medium accel<small>Shift at 3000 rpm</small></label><input type="range" id="gMed" min="0.1" max="0.35" step="0.01"><output id="gMedO"></output></div>
+    <div class="row"><label>Hard accel<small>Shift at 4000 rpm</small></label><input type="range" id="gFast" min="0.18" max="0.6" step="0.01"><output id="gFastO"></output></div>
+    <div class="row"><label>Maximum accel<small>Shift at 5000 rpm</small></label><input type="range" id="gMax" min="0.25" max="0.7" step="0.01"><output id="gMaxO"></output></div>
+    <div class="row"><label>Downshift when slowing at<small>Rev-matched downshift once revs drop below this</small></label><input type="range" id="downRpm" min="2000" max="4000" step="100"><output id="downRpmO"></output></div>
+    <div class="row"><label>…raise it after hard driving<small>Follows your recent shift points (up to 4000)</small></label><input type="checkbox" id="downFollow"></div>
+    <div class="row"><label>Sport mode: revs never below<small>Stays in a lower gear to keep revs up. Far left = off</small></label><input type="range" id="sportMinRpm" min="1500" max="4000" step="100"><output id="sportMinRpmO"></output></div>
+    <div class="row"><label>…except below<small>Normal behaviour under this speed</small></label><input type="range" id="sportBelowKmh" min="0" max="50" step="1"><output id="sportBelowKmhO"></output></div>
+    <div class="row"><label>Full throttle at<small>Acceleration that maps to 100%</small></label><input type="range" id="loadFullG" min="0.1" max="0.5" step="0.01"><output id="loadFullGO"></output></div>
+    <div class="row"><label>GPS lag<small>Compensation for iPhone GPS speed delay</small></label><input type="range" id="gpsLatency" min="0" max="1.5" step="0.05"><output id="gpsLatencyO"></output></div>
+    <div class="row"><label>Phone direction<small id="fwdInfo">Learns on first pull-away</small></label><button class="btn" id="recal">Re-learn</button></div>
+    <div class="row"><label>Reset settings</label><button class="btn" id="resetCfg">Reset</button></div>
+  </div>
+</details>
+
+<details>
+  <summary>OBD2 (optional)</summary>
+  <div class="pad">
+    <div id="obdNo" class="note">This browser has no Bluetooth access. iPhone Safari never does. To use a Bluetooth LE OBD2 adapter (e.g. Vgate iCar Pro BLE, OBDLink CX), open this page in the free <b>Bluefy</b> browser. Phone sensors work without OBD2.</div>
+    <div id="obdYes" class="hidden">
+      <div class="row"><label>Init commands</label><input type="text" id="obdInit" value="ATZ;ATE0;ATL0;ATS0;ATH0;ATAT2;ATSP6"></div>
+      <div class="row"><label>Adapter<small id="obdInfo">Not connected</small></label><button class="btn primary" id="obdConnect">Connect</button></div>
+      <div class="row"><input type="text" id="obdCmd" placeholder="Raw command, e.g. 010D" style="max-width:none;flex:1"><button class="btn" id="obdSend">Send</button></div>
+      <pre id="obdlog"></pre>
+    </div>
+  </div>
+</details>
+
+<details>
+  <summary>About &amp; credits</summary>
+  <div class="pad note">
+    <p><b>Sound engine.</b> Constant-RPM loops cut from the recordings every 200–300 rpm, on- and off-throttle. They're phase-aligned to the engine cycle and crossfaded by RPM and throttle. At idle, a long real idle recording plays untouched.</p>
+    <p>Recordings: Ford Mustang GT500 by <a href="https://freesound.org/people/VacekH/" target="_blank" rel="noopener">VacekH</a> on Freesound (CC0). RPM was measured from the firing-order harmonics.</p>
+    <p>Idle recording: 1964 Chrysler Windsor by <a href="https://freesound.org/s/240671/" target="_blank" rel="noopener">lonemonk</a> on Freesound (CC BY 4.0).</p>
+    <p>Map: © OpenStreetMap contributors. Drives are stored on this phone, and leave it only if you turn on upload (to your own GitHub repo) or send one.</p>
+    <p>Gearing: S550 Mustang GT. 10R80 ratios from Ford's chart, MT82 manual ratios from CJ Pony Parts, 255/40R19 tyres.</p>
+    <p>Keep the screen on with the app open. iOS stops web audio and sensors when the screen locks.</p>
+  </div>
+</details>
+
+</section>
+
+<section class="page hidden" id="drivesPage">
+  <div class="idleBox">
+    <h2>Drives</h2>
+    <div class="row"><label>Record drives automatically<small>While the engine is running; saved on this phone</small></label><input type="checkbox" id="autoRec"></div>
+    <div class="rowBtns">
+      <label class="btn">Import JSON<input type="file" id="importFile" accept=".json,application/json" hidden></label>
+    </div>
+    <div id="driveList"></div>
+  </div>
+  <div class="idleBox upBox">
+    <h2>Send drives for analysis</h2>
+    <p>Each finished real drive (not the simulator) is uploaded to your own private GitHub repo. Claude analyses them there and suggests better settings and sound changes.</p>
+    <div class="row"><label>Upload after every drive<small>Waiting drives go up the next time the app is open with signal</small></label><input type="checkbox" id="upOn"></div>
+    <div class="row stack"><label>Repo</label><input type="text" id="upRepo" placeholder="owner/repo" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+    <div class="row stack"><label>Token<small>Fine-grained, this repo only, Contents read &amp; write. Stays on this phone.</small></label><input type="password" id="upToken" placeholder="github_pat_…" autocomplete="off"></div>
+    <div class="rowBtns"><button class="btn" id="upNow">Upload waiting drives</button></div>
+    <p class="note" id="upStatus"></p>
+  </div>
+  <div id="driveDetail" class="hidden">
+    <div class="metrics">
+      <button class="metricBtn on" data-m="accel">Acceleration</button>
+      <button class="metricBtn" data-m="speed">Speed</button>
+      <button class="metricBtn" data-m="rpm">RPM</button>
+      <button class="metricBtn" data-m="gear">Gear</button>
+      <button class="metricBtn" data-m="load">Throttle</button>
+    </div>
+    <div id="driveMap"></div>
+    <div id="mapLegend"></div>
+    <canvas id="driveChart"></canvas>
+    <div id="cursorInfo"></div>
+    <div id="driveStats"></div>
+    <div class="rowBtns">
+      <button class="btn" id="driveShare">Send…</button>
+      <button class="btn" id="driveUpload">Upload</button>
+      <button class="btn" id="driveExport">Export JSON</button>
+      <button class="btn" id="driveDelete">Delete drive</button>
+    </div>
+    <p class="note" id="driveUpInfo"></p>
+  </div>
+</section>
+
+<script type="module" src="app.js?v=8"></script>
+</body>
+</html>
