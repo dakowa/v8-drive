@@ -15,6 +15,24 @@ How releases are made (`tools/release.sh <N>`):
 From v9 on, the release number, the asset version and the tag are the same number. Before
 that they drifted: v4 shipped as asset version 5 and v5 as asset version 6, and there is no v6.
 
+## v9 (tag v9)
+- One engine pitch slider again (the v5 "Pitch test" A/B is gone). Nothing plays faster than at
+  pitch 1.10: the idle stays at most 1.10× its recorded speed, and above 1.10 the top end
+  flattens out near 4300 rpm, where the GT500 recordings end, instead of running the loops up
+  to 1.8× too fast.
+- 5–15 km/h: crawling on a light throttle plays the real idle (the clutch slips just above
+  idle); a firm throttle or 16 km/h hands over to the engine. Idle and engine switch with
+  hysteresis and a short crossfade, never a lingering blend of a sped-up idle and the engine.
+  Pulling away slips at 1500 rpm or more. The low-speed A/B toggle is gone.
+- The 1100–2100 rpm loops are re-picked for the least RPM drift within each loop; 2350 rpm
+  and up are unchanged.
+- Idle picker back, as in v3: I3 Chrysler (default) or I1 Mustang 5.0.
+- Version control: release tags, this changelog, the previous release playable at /prev/
+  (version badge in the header).
+- A second, fully recorded engine was looked for and not added: the best candidate (a Ford
+  Galaxie V8 with steady free-revs) has gaps of 18–38% between its recorded speeds and no
+  on-throttle sound, so it would have needed stretching or stitching.
+
 ## v8 (tag v8)
 - Robust drive uploads: drive files named to the second, "already exists" counts as uploaded,
   drives from before v7 upload too.
