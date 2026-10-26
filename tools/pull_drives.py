@@ -15,7 +15,10 @@ def gh(*args, raw=False):
     r = subprocess.run(['gh', 'api', *(['-H', 'Accept: application/vnd.github.raw'] if raw else []), *args],
                        capture_output=True)
     if r.returncode:
-        sys.exit(f'gh api {args[0]} failed: {r.stderr.decode().strip()}')
+        err = (r.stderr + r.stdout).decode().strip()
+        if 'Git Repository is empty' in err or 'HTTP 409' in err:
+            sys.exit('no drives uploaded yet')
+        sys.exit(f'gh api {args[0]} failed: {err}')
     return r.stdout if raw else json.loads(r.stdout)
 
 

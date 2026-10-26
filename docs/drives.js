@@ -205,7 +205,7 @@ export function normalizeImport(j) {
 export function driveJson(d, appVersion) {
   return JSON.stringify({ app: 'v8drive', version: LOG_VERSION, appVersion, ...d });
 }
-export const driveFileName = (d) => `v8drive-${d.started.slice(0, 16).replace(/[-:T]/g, '')}.json`;
+export const driveFileName = (d) => `v8drive-${d.started.slice(0, 19).replace(/[-:T]/g, '')}.json`;
 
 export function exportDrive(d, appVersion) {
   const blob = new Blob([driveJson(d, appVersion)], { type: 'application/json' });
@@ -292,7 +292,7 @@ export class DrivesView {
     this.shareFile = null;
     this.el.querySelector('#driveUpInfo').textContent = this.drive.uploaded ? `Uploaded as ${this.drive.uploaded}` : '';
     const d = this.drive;
-    import('./upload.js?v=7').then((u) => u.gzip(driveJson(d, this.appVersion)))
+    import('./upload.js?v=8').then((u) => u.gzip(driveJson(d, this.appVersion)))
       .then((gz) => { if (this.drive === d) this.shareFile = new File([gz], driveFileName(d) + '.gz', { type: 'application/gzip' }); })
       .catch(() => {});
     this.el.querySelector('#driveDetail').classList.remove('hidden');

@@ -4,7 +4,7 @@
 // only in this phone's localStorage under its own key, never in the settings that drives
 // record, and is sent only to api.github.com.
 
-import { store, driveJson, driveFileName } from './drives.js?v=7';
+import { store, driveJson, driveFileName } from './drives.js?v=8';
 
 const KEY = 'v8drive.upload';
 const PART = 20 * 1024 * 1024;     // bigger files go up in parts (.000, .001, ...)
@@ -20,7 +20,8 @@ export function saveUploadCfg(c) {
   try { localStorage.setItem(KEY, JSON.stringify(c)); } catch (e) { /* private mode */ }
 }
 
-export const isRealDrive = (m) => m.ended && (m.gpsMaxKmh || 0) >= MIN_GPS_KMH;
+// drives from before v7 have no GPS max speed: trust the fused speed unless it was the simulator
+export const isRealDrive = (m) => m.ended && (m.gpsMaxKmh ?? (m.sim ? 0 : m.maxKmh)) >= MIN_GPS_KMH;
 
 export async function gzip(text) {
   const s = new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'));
@@ -37,11 +38,10 @@ async function put(c, path, bytes, message) {
   const url = `https://api.github.com/repos/${c.repo}/contents/${path}`;
   const headers = { Authorization: `Bearer ${c.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
   const body = { message, content: b64(bytes) };
-  let r = await fetch(url, { method: 'PUT', headers, body: JSON.stringify(body) });
-  if (r.status === 422) {          // already there (an earlier attempt got cut off): replace it
-    const cur = await fetch(url, { headers });
-    if (cur.ok) r = await fetch(url, { method: 'PUT', headers, body: JSON.stringify({ ...body, sha: (await cur.json()).sha }) });
-  }
+  const r = await fetch(url, { method: 'PUT', headers, body: JSON.stringify(body) });
+  // 422: the file exists. Names are unique per drive and a PUT is all-or-nothing, so an earlier
+  // attempt landed but its reply was lost (phone locked mid-upload)
+  if (r.status === 422) return;
   if (!r.ok) {
     const msg = { 401: 'token rejected', 403: 'token lacks access to this repo', 404: 'repo not found (or token lacks access)' }[r.status];
     throw new Error(`GitHub ${r.status}: ${msg || (await r.text()).slice(0, 120)}`);

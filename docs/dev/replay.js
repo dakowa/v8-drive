@@ -3,12 +3,12 @@
 // anything. Also renders the sound of any stretch of a drive, as heard or with overrides.
 // Usage (from the app page console; tools/pull_drives.py links its drives/ folder to dev/drives):
 //   const r = await import('./dev/replay.js');
-//   const d = await r.loadDrive('dev/drives/v8drive-202610271815.json.gz');
+//   const d = await r.loadDrive('dev/drives/v8drive-20261027181502.json.gz');
 //   r.check(d);                                   // replay vs log: should match closely
 //   const x = r.replay(d, { gMed: 0.18 });         // {rows, events, cfg}
 //   r.compare(d, x);                               // upshift RPMs etc., logged vs replayed
 //   await r.renderSpan('mark1', d, 120, 135, { ...__v8.banks, over: { gMed: 0.18 } });
-import { Fusion, Drivetrain, SimCar, DEFAULTS } from '../vehicle.js?v=7';
+import { Fusion, Drivetrain, SimCar, DEFAULTS } from '../vehicle.js?v=8';
 import { render } from './render-drive.js';
 
 export const ROW = { t: 0, v: 1, a: 2, aRaw: 3, rpm: 4, gear: 5, load: 6, aggr: 7, aq: 8, shift: 9 };

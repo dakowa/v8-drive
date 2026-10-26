@@ -1,10 +1,10 @@
-import { Fusion, Drivetrain, SimCar, DEFAULTS, TRANSMISSIONS, G } from './vehicle.js?v=7';
-import { Obd, clean } from './obd.js?v=7';
-import { Recorder, DrivesView, store, normalizeImport, exportDrive } from './drives.js?v=7';
-import { uploadCfg, saveUploadCfg, syncDrives, uploadDrive } from './upload.js?v=7';
+import { Fusion, Drivetrain, SimCar, DEFAULTS, TRANSMISSIONS, G } from './vehicle.js?v=8';
+import { Obd, clean } from './obd.js?v=8';
+import { Recorder, DrivesView, store, normalizeImport, exportDrive } from './drives.js?v=8';
+import { uploadCfg, saveUploadCfg, syncDrives, uploadDrive } from './upload.js?v=8';
 
 const $ = (id) => document.getElementById(id);
-const VERSION = '7';   // bump with each release (also in index.html and the imports above)
+const VERSION = '8';   // bump with each release (also in index.html and the imports above)
 
 // ------------------------------------------------------------------ settings
 const SETTINGS_KEY = 'v8drive.settings';

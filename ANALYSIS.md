@@ -2,7 +2,7 @@
 
 The phone records every drive. With upload on (Drives tab → *Send drives for analysis*), each
 finished real drive goes to the private repo `dakowa/v8-drive-logs` as
-`drives/v8drive-YYYYMMDDHHMM.json.gz`. Drives are never committed to this (public) repo:
+`drives/v8drive-YYYYMMDDHHMMSS.json.gz`. Drives are never committed to this (public) repo:
 `drives/` is gitignored.
 
 ## Steps (for Claude)
@@ -33,7 +33,7 @@ finished real drive goes to the private repo `dakowa/v8-drive-logs` as
 | Section | Look for | Typical action |
 | --- | --- | --- |
 | dataQuality | rowHz well under 20, gaps, `backgrounded`, linear accel missing | Drive data is unreliable there; ignore those stretches |
-| speed.bestLagS vs settingGpsLatency | A consistent difference across drives | Change the `gpsLatency` default |
+| speed.bestLagS vs settingGpsLatency | A consistent difference across drives | Change the `gpsLatency` default. The fused speed was itself corrected with the current setting, so the estimate leans toward it: trust it only when it differs consistently, and confirm with replay (`over: { gpsLatency }`, compare `rmsAtBest`) |
 | speed.correctionJumpKmh | p90 above ~2 km/h | GPS corrections are audible as RPM steps; tune Fusion (`correct` gains) |
 | accel.pullPeakG vs thresholds | Bands the driver never or always reaches | Move gSlow/gMed/gFast/gMax so 2k/3k/4k/5k shifts happen as intended |
 | shifts.upRpm, hunting | Reversals within 3 s, upshift RPM far from intended | Drivetrain hysteresis or kickdown logic |

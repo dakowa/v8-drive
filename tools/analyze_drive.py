@@ -4,7 +4,7 @@ Writes drives/reports/<drive>.md (findings with numbers), <drive>.png (overview 
 marked moment) and <drive>.json (the same numbers, for comparing drives).
 See ANALYSIS.md for how these feed back into the app's settings and code.
 
-Usage: python tools/analyze_drive.py drives/v8drive-202610271815.json.gz [more files]
+Usage: python tools/analyze_drive.py drives/v8drive-20261027181502.json.gz [more files]
        python tools/analyze_drive.py --new      (every drive in drives/ without a report)
 """
 import gzip, json, os, sys
@@ -17,6 +17,8 @@ G = 9.81
 DEFAULTS = dict(gSlow=0.10, gMed=0.20, gFast=0.32, gMax=0.45, rpmSlow=2000, rpmMed=3000, rpmFast=4000, rpmMax=5000,
                 downRpm=2500, gpsLatency=0.45, loadFullG=0.22, pitch=1.0, pitchMode='A', lowSpeed='A',
                 sportMinRpm=0, sportBelowKmh=10)
+ROW_COLS = ['t', 'v', 'a', 'aRaw', 'rpm', 'gear', 'load', 'aggr']        # before v7 logs listed their own
+GPS_COLS = ['t', 'lat', 'lon', 'speed', 'acc', 'heading']
 TOP_LOOP_RPM = 4400   # highest recorded engine loop; above it the sound is a sped-up recording
 
 
@@ -69,8 +71,8 @@ def episodes(mask, t, min_len=0.0):
 
 def analyze(d):
     cfg = {**DEFAULTS, **(d.get('settings') or {})}
-    R = table(d.get('rows', []), d.get('columns') or ['t', 'v', 'a', 'aRaw', 'rpm', 'gear', 'load', 'aggr'])
-    Gp = table(d.get('gps', []), d.get('gpsColumns') or ['t', 'lat', 'lon', 'speed', 'acc', 'heading'])
+    R = table(d.get('rows', []), d.get('columns') or ROW_COLS)
+    Gp = table(d.get('gps', []), d.get('gpsColumns') or GPS_COLS)
     M = table(d.get('motion', []), d.get('motionColumns') or ['t'])
     ev = d.get('events', [])
     t, v, a = R['t'], R['v'], R['a']
@@ -197,8 +199,8 @@ def plot(d, out, path):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     cfg = {**DEFAULTS, **(d.get('settings') or {})}
-    R = table(d.get('rows', []), d.get('columns'))
-    Gp = table(d.get('gps', []), d.get('gpsColumns'))
+    R = table(d.get('rows', []), d.get('columns') or ROW_COLS)
+    Gp = table(d.get('gps', []), d.get('gpsColumns') or GPS_COLS)
     t = R['t']
     marks = out['marks']
     n = 3 + len(marks)
