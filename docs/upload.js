@@ -4,7 +4,7 @@
 // only in this phone's localStorage under its own key, never in the settings that drives
 // record, and is sent only to api.github.com.
 
-import { store, driveJson, driveFileName } from './drives.js?v=8';
+import { store, driveJson, driveFileName } from './drives.js?v=9';
 
 const KEY = 'v8drive.upload';
 const PART = 20 * 1024 * 1024;     // bigger files go up in parts (.000, .001, ...)
