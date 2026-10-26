@@ -68,7 +68,7 @@ a { color: var(--accent2); }
 .idleBox { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px; margin-top: 12px; }
 .idleBox h2 { font-size: 14px; margin: 0 0 2px; }
 .idleBox p { color: var(--dim); font-size: 12.5px; margin: 0 0 10px; }
-#idlePick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#idlePick, #lowPick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .idleBtn { appearance: none; text-align: left; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 12px; padding: 10px; font: inherit; }
 .idleBtn b { font-size: 16px; margin-right: 6px; } .idleBtn span { font-size: 13px; }
 .idleBtn small { display: block; color: var(--dim); font-size: 11.5px; margin-top: 3px; }
@@ -168,6 +168,12 @@ a { color: var(--accent2); }
   <div id="idlePick"></div>
 </div>
 
+<div class="idleBox">
+  <h2>Low-rpm sound (test)</h2>
+  <p>Four different takes on 1100–2100 rpm, where gentle acceleration sits. Switch any time; each drive log records which one played.</p>
+  <div id="lowPick"></div>
+</div>
+
 <details>
   <summary>Settings</summary>
   <div class="pad" id="settings">
@@ -208,6 +214,7 @@ a { color: var(--accent2); }
     <p><b>Sound engine.</b> Constant-RPM loops cut from the recordings every 200–300 rpm, on- and off-throttle. They're phase-aligned to the engine cycle and crossfaded by RPM and throttle. At idle, a long real idle recording plays untouched.</p>
     <p>Recordings: Ford Mustang GT500 by <a href="https://freesound.org/people/VacekH/" target="_blank" rel="noopener">VacekH</a> on Freesound (CC0). RPM was measured from the firing-order harmonics.</p>
     <p>Idle recordings (Freesound): 1964 Chrysler Windsor by <a href="https://freesound.org/s/240671/" target="_blank" rel="noopener">lonemonk</a> (CC BY 4.0); 1985 Ford Mustang 5.0 by <a href="https://freesound.org/s/119449/" target="_blank" rel="noopener">lmbubec</a> (CC0).</p>
+    <p>Low-rpm test sounds (Freesound): 1970s Ford Galaxie V8 by <a href="https://freesound.org/s/512704/" target="_blank" rel="noopener">snafic</a> (CC BY 4.0); Chevrolet Caprice V8 by <a href="https://freesound.org/s/391671/" target="_blank" rel="noopener">romanholtwick</a> (CC0).</p>
     <p>Map: © OpenStreetMap contributors. Drives are stored on this phone, and leave it only if you turn on upload (to your own GitHub repo) or send one.</p>
     <p>Gearing: S550 Mustang GT. 10R80 ratios from Ford's chart, MT82 manual ratios from CJ Pony Parts, 255/40R19 tyres.</p>
     <p>Keep the screen on with the app open. iOS stops web audio and sensors when the screen locks.</p>

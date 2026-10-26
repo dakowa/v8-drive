@@ -8,7 +8,7 @@ const VERSION = '9';   // bump with each release (also in index.html and the imp
 
 // ------------------------------------------------------------------ settings
 const SETTINGS_KEY = 'v8drive.settings';
-const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, autoRec: true, sound: 'I3' };
+const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, autoRec: true, sound: 'I3', lowSound: 'A' };
 const SETTINGS_VERSION = 6;   // v9: idle picker back (cfg.sound), pitch and low-speed A/B retired
 // Settings earlier releases used. Deleted on every load, not once: v1-v8 and the /prev/ copy
 // of v8 shipped before the archive (docs/v/) gave old releases their own storage, and may still
@@ -37,6 +37,7 @@ let simPedal = 0, simRegen = 1, simBrake = 0;
 let ctx = null, node = null, master = null;
 let banks = null;            // {bank, idle}: the loop bank and the idle playing now
 let idles = null;            // {sr, idles: [...]}, each idle's .data loaded when first picked
+let bankA = null;            // the GT500 loop bank as built (banks.bank adds the low-rpm variant)
 const recorder = new Recorder();
 let drivesView = null;
 let lastEventN = 0;
@@ -115,6 +116,58 @@ function renderIdlePicker() {
   }
 }
 
+// v10 test: four distinctly different sounds for 1100-2100 rpm (gentle acceleration). The GT500
+// recordings have no steady stretches there, only fast sweeps. Retire once one is picked.
+const LOW_SOUNDS = [
+  { id: 'A', name: 'GT500, as in v9', info: 'Slices of real pull-aways', keep: 0 },
+  { id: 'B', name: 'Ford Galaxie V8', info: 'Steady revs 1200–1840, GT500 from 2100', file: 'lowB', keep: 2100 },
+  { id: 'C', name: 'Chevy Caprice V8', info: 'Steady revs 1150–1550, GT500 from 1700', file: 'lowC', keep: 1700 },
+  { id: 'D', name: 'GT500 slowed down', info: 'Its clean 2100 rpm sound, deeper below that', keep: 2100 },
+];
+
+async function loadLow(v) {
+  if (v.file && !v.bank) {
+    const [j, w] = await Promise.all([
+      fetch(`audio/${v.file}.json?v=${VERSION}`).then((r) => r.json()),
+      fetchProgress(`audio/${v.file}.wav?v=${VERSION}`, () => {}),
+    ]);
+    j.data = parseWav(w).data.map((x) => x * j.gain);
+    v.bank = j;
+  }
+  return v;
+}
+
+// The GT500 bank with its loops below `keep` rpm replaced by the variant's loops (D: none, so
+// the 2100 rpm loop plays slowed down below 2100).
+function lowBank(v) {
+  const loops = bankA.loops.filter((l) => l.rpm >= v.keep);
+  if (!v.bank) return { sr: bankA.sr, loops, data: bankA.data };
+  const n = bankA.data.length, data = new Float32Array(n + v.bank.data.length);
+  data.set(bankA.data); data.set(v.bank.data, n);
+  return { sr: bankA.sr, loops: loops.concat(v.bank.loops.map((l) => ({ ...l, start: l.start + n }))), data };
+}
+
+async function selectLow(id) {
+  cfg.lowSound = id; saveSettings();
+  renderLowPicker();
+  const v = await loadLow(LOW_SOUNDS.find((x) => x.id === id));
+  if (cfg.lowSound !== id) return;   // another one was picked while this one loaded
+  const b = banks.bank = lowBank(v);
+  if (node) node.port.postMessage({ type: 'bank', sr: b.sr, loops: b.loops, data: b.data });
+}
+
+function renderLowPicker() {
+  const box = $('lowPick');
+  box.innerHTML = '';
+  for (const v of LOW_SOUNDS) {
+    const b = document.createElement('button');
+    b.className = 'idleBtn' + (v.id === cfg.lowSound ? ' on' : '');
+    b.innerHTML = `<b>${v.id}</b><span>${v.name}</span><small>${v.info}</small>`;
+    b.addEventListener('click', () => selectLow(v.id));
+    box.appendChild(b);
+  }
+}
+
 async function loadBanks() {
   const [bank, list] = await Promise.all([
     fetch('audio/bankA.json?v=' + VERSION).then((r) => r.json()),
@@ -130,7 +183,10 @@ async function loadBanks() {
   const prog = (b) => { got += b; $('startBtn').textContent = `Loading sounds… ${Math.min(99, Math.round(got / total * 100))}%`; };
   const [bw, idle] = await Promise.all([fetchProgress('audio/bankA.wav?v=' + VERSION, prog), loadIdle(cfg.sound, prog)]);
   bank.data = parseWav(bw).data;
-  return { bank, idle };
+  bankA = bank;
+  if (!LOW_SOUNDS.find((v) => v.id === cfg.lowSound)) cfg.lowSound = UI_DEFAULTS.lowSound;
+  const low = await loadLow(LOW_SOUNDS.find((v) => v.id === cfg.lowSound));
+  return { bank: lowBank(low), idle };
 }
 
 // ------------------------------------------------------------------ audio
@@ -518,6 +574,7 @@ loadBanks().then((b) => {
   cfg.idleRpm = b.idle.rpm;
   drive.rpm = Math.max(drive.rpm, cfg.idleRpm * 0.95);
   renderIdlePicker();
+  renderLowPicker();
   $('engineSub').textContent = 'Ford Mustang GT500 V8 · EV sound';
   $('startBtn').disabled = false;
   $('startBtn').textContent = 'Start engine';
@@ -525,4 +582,4 @@ loadBanks().then((b) => {
 sync();   // finish and upload drives from earlier sessions
 
 // test hook for automated checks
-window.__v8 = { sync, mark, cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, get idles() { return idles; }, selectIdle, recorder, get drivesView() { return drivesView; }, store, setPedal: (p, r = p > 0 ? 0 : 1) => { simPedal = p; simRegen = r; }, setBrake: (b) => { simBrake = b; } };
+window.__v8 = { sync, mark, cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, get idles() { return idles; }, selectIdle, selectLow, recorder, get drivesView() { return drivesView; }, store, setPedal: (p, r = p > 0 ? 0 : 1) => { simPedal = p; simRegen = r; }, setBrake: (b) => { simBrake = b; } };

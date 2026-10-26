@@ -9,6 +9,8 @@ Constant-RPM loops (on- and off-throttle) cut from the Mustang GT500 recordings 
 
 Engine pitch (one slider, 0.70–1.40): sound RPM = RPM × pitch, with one limit: nothing plays faster than at pitch 1.10, the highest that sounded natural (v5–v8 showed that above it the idle got sped up and the loops ran up to 1.8× past the recordings). So the idle plays at most 1.10× its recorded speed, and above pitch 1.10 the sound flattens out near 4,300 rpm, where the recordings end. Pulse re-spacing (v4) was dropped: it sounded broken.
 
+Low-rpm test (v10): the GT500 recordings have no steady stretches between idle and ~2000 rpm, only fast sweeps, and gentle acceleration sounded bad there. The "Low-rpm sound (test)" picker on the Drive page (`lowSound` setting, recorded in each drive log) switches between four distinctly different takes on 1100–2100 rpm: **A** the GT500 loops as in v9 (slices of pull-aways); **B** steady holds of a 1970s Ford Galaxie V8 (1200–1840 rpm, GT500 from 2100); **C** steady holds of a Chevrolet Caprice V8 (1150–1550 rpm, GT500 from 1700); **D** the clean GT500 2100 rpm loop slowed down below 2100. The Galaxie and Caprice holds are free revs or light load, so their on-throttle layer is the same sound, louder. The picker goes once one is chosen.
+
 Idle and engine switch with hysteresis (engine above 1.40× idle RPM or load 0.30, back below 1.30× and 0.20) and a short timed crossfade (50 ms in, 300 ms out), so the sound is never a lingering blend of a sped-up idle and the engine.
 
 Extra engines (BMW M5 V10, Ferrari 458, Mercedes-AMG, Camaro) were tried in v4 from Wikimedia Commons recordings and removed in v5: they sounded bad and their separate idle recordings clashed. A granular-replay engine (B) was tried in v1–v2 and dropped as too metallic.
@@ -33,9 +35,9 @@ With *Send drives for analysis* on, every finished real drive (GPS speed above 1
 A dedicated idle player loops a long, seamless real idle (`tools/build_idles.py`) and crossfades into the engine sound as revs or throttle rise. The "Idle sound" picker on the Drive page chooses the recording, as in v3: I3, a 1964 Chrysler V8 at the tailpipe (default), or I1, a 1985 Ford Mustang 5.0. The choice is saved as the `sound` setting and recorded in each drive log; picking another idle while one plays crossfades over 150 ms. Corvette, Camaro and re-sequenced GT500 idles were tried and dropped.
 
 ## Rebuilding the sample banks
-`tools/build_banks.py` (numpy, scipy, imageio-ffmpeg) reads `tools/cache/*.ogg` and the measured RPM tracks in `tools/data/tracks.json`, writes `docs/audio/bankA.{wav,json}`. The GT500 recordings have no steady stretches between idle and ~2000 rpm, only sweeps, so the 1100–2100 rpm loops are picked for the least RPM variation within 6% of their target (from v9), and off-throttle loops there use the on-throttle sound at the right RPM rather than an off-throttle one 10–30% off.
+`tools/build_banks.py` (numpy, scipy, imageio-ffmpeg) reads `tools/cache/*.ogg` and the measured RPM tracks in `tools/data/tracks.json`, writes `docs/audio/bankA.{wav,json}`. The GT500 recordings have no steady stretches between idle and ~2000 rpm, only sweeps, so the 1100–2100 rpm loops are picked for the least RPM variation within 6% of their target (from v9), and off-throttle loops there use the on-throttle sound at the right RPM rather than an off-throttle one 10–30% off. `tools/build_low.py` builds the low-rpm test variants B and C (`docs/audio/low{B,C}.{wav,json}`) from the steady holds listed in `tools/data/holds.json`.
 
 ## Credits
-Recordings (Freesound): Mustang GT500 by VacekH, CC0 (205501, 205503, 205508, 205510, 205511). Idles: 1964 Chrysler Windsor by lonemonk, CC BY 4.0 (240671); 1985 Ford Mustang 5.0 by lmbubec, CC0 (119449).
+Recordings (Freesound): Mustang GT500 by VacekH, CC0 (205501, 205503, 205508, 205510, 205511). Idles: 1964 Chrysler Windsor by lonemonk, CC BY 4.0 (240671); 1985 Ford Mustang 5.0 by lmbubec, CC0 (119449). Low-rpm test: 1970s Ford Galaxie V8 by snafic, CC BY 4.0 (512704); Chevrolet Caprice V8 by romanholtwick, CC0 (391671).
 
 Map data © OpenStreetMap contributors.
