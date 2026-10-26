@@ -2,14 +2,11 @@ import { Fusion, Drivetrain, SimCar, DEFAULTS, TRANSMISSIONS, G } from './vehicl
 import { Obd, clean } from './obd.js';
 
 const $ = (id) => document.getElementById(id);
-const MODE_INFO = {
-  A: 'A · Loop bank: phase-aligned constant-RPM loops, crossfaded',
-  B: 'B · Granular replay: the real recording, cycle by cycle',
-};
 
 // ------------------------------------------------------------------ settings
 const SETTINGS_KEY = 'v8drive.settings';
-const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, mode: 'A', idle: 'I1' };
+const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, idle: 'I3' };
+const SETTINGS_VERSION = 3;   // v3: engine B removed, Chrysler idle (I3) chosen as default
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch (e) { return {}; }
 }
@@ -17,8 +14,8 @@ function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(cfg)); } catch (e) { /* private mode */ }
 }
 const cfg = { ...DEFAULTS, ...UI_DEFAULTS, ...loadSettings() };
-const hashMode = location.hash.replace('#', '').toUpperCase();
-if (hashMode === 'A' || hashMode === 'B') cfg.mode = hashMode;
+if (cfg.version !== SETTINGS_VERSION) { cfg.idle = UI_DEFAULTS.idle; cfg.version = SETTINGS_VERSION; }
+delete cfg.mode;
 
 // ------------------------------------------------------------------ state
 const fusion = new Fusion(cfg);
@@ -100,19 +97,17 @@ function renderIdlePicker() {
 
 async function loadBanks() {
   let got = 0;
-  const total = 5.5e6;
+  const total = 3.4e6;
   const prog = (b) => { got += b; $('startBtn').textContent = `Loading sounds… ${Math.min(99, Math.round(got / total * 100))}%`; };
   const ij = await fetch('audio/idles.json').then((r) => r.json());
   idles = ij;
   if (!ij.idles.find((v) => v.id === cfg.idle)) cfg.idle = ij.idles[0].id;
-  const [aj, bj, aw, bw] = await Promise.all([
+  const [aj, aw] = await Promise.all([
     fetch('audio/bankA.json').then((r) => r.json()),
-    fetch('audio/bankB.json').then((r) => r.json()),
     fetchProgress('audio/bankA.wav', prog),
-    fetchProgress('audio/bankB.wav', prog),
     loadIdle(cfg.idle, prog),
   ]);
-  return { A: { ...aj, data: parseWav(aw).data }, B: { ...bj, data: parseWav(bw).data } };
+  return { A: { ...aj, data: parseWav(aw).data } };
 }
 
 // ------------------------------------------------------------------ audio
@@ -141,9 +136,8 @@ async function startAudio() {
   const comp = ctx.createDynamicsCompressor();
   comp.threshold.value = -8; comp.knee.value = 6; comp.ratio.value = 6; comp.attack.value = 0.003; comp.release.value = 0.15;
   node.connect(master).connect(comp).connect(ctx.destination);
-  const a = banks.A, b = banks.B;
+  const a = banks.A;
   node.port.postMessage({ type: 'bankA', sr: a.sr, loops: a.loops, data: a.data });
-  node.port.postMessage({ type: 'bankB', sr: b.sr, frame: b.frame, segments: b.segments, data: b.data });
   await selectIdle(cfg.idle);
   ctx.onstatechange = () => updateChips();
 }
@@ -239,7 +233,7 @@ function sendState(silence) {
   if (!node) return;
   const on = running && !silence;
   node.port.postMessage({
-    type: 'state', mode: cfg.mode,
+    type: 'state',
     rpm: drive.rpm * cfg.pitch, rate: drive.rate * cfg.pitch,
     load: drive.load, gain: on ? 0.72 + 0.38 * drive.load : 0,
   });
@@ -274,7 +268,7 @@ function drawTach() {
   tc.beginPath(); tc.arc(cx, cy, R, ang(6500), a1); tc.stroke();
   const grad = tc.createLinearGradient(cx - R, 0, cx + R, 0);
   grad.addColorStop(0, '#ffb020'); grad.addColorStop(1, '#ff3d1f');
-  tc.strokeStyle = cfg.mode === 'A' ? '#4aa8ff' : grad;
+  tc.strokeStyle = grad;
   tc.beginPath(); tc.arc(cx, cy, R, a0, ang(drive.rpm)); tc.stroke();
   // ticks
   tc.fillStyle = '#8b929c'; tc.font = '600 30px -apple-system, system-ui, sans-serif'; tc.textAlign = 'center'; tc.textBaseline = 'middle';
@@ -321,14 +315,6 @@ function updateChips() {
   if (obd && obd.polling) chip('cObd', 'ok', `OBD2 ${obd.rateHz.toFixed(1)} Hz`);
 }
 
-function setMode(m) {
-  cfg.mode = m; saveSettings();
-  document.querySelectorAll('.ab button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
-  $('modeinfo').textContent = MODE_INFO[m];
-  history.replaceState(null, '', '#' + m);
-  sendState(!running);
-}
-
 function bindRange(id, fmt, onChange) {
   const el = $(id), out = $(id + 'O');
   el.value = cfg[id];
@@ -338,8 +324,6 @@ function bindRange(id, fmt, onChange) {
 }
 
 function initUI() {
-  document.querySelectorAll('.ab button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.m)));
-  setMode(cfg.mode);
   $('startBtn').addEventListener('click', () => (running ? stop() : start()));
   const sel = $('trans');
   for (const [k, t] of Object.entries(TRANSMISSIONS)) sel.add(new Option(t.name, k));

@@ -21,7 +21,6 @@ export async function render(mode, { sr = 44100, dur = 43, banks = window.__v8.b
   const node = new AudioWorkletNode(ctx, 'v8-engine', { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
   node.connect(ctx.destination);
   node.port.postMessage({ type: 'bankA', ...banks.A });
-  node.port.postMessage({ type: 'bankB', ...banks.B });
   const cfg = { ...DEFAULTS };
   if (idle) { node.port.postMessage({ type: 'idle', sr: 32000, rpm: idle.rpm, data: idle.data, length: idle.data.length - 2 }); cfg.idleRpm = idle.rpm; }
   const drive = new Drivetrain(cfg);

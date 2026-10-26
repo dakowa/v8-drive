@@ -4,9 +4,6 @@ Each variant is a long, seamless loop of a steady real idle: tonal whines are no
 rumble below 25 Hz removed, and the loop seam is placed where the tail best matches the head
 (cross-correlation), then joined with a 1 s equal-power crossfade.
 
-I4 instead re-sequences the GT500's own idle cycle by cycle (only ~1.1 s of it exists), so it
-stays the same car as the driving banks without an audible short loop.
-
 Writes docs/audio/idle_<id>.wav and docs/audio/idles.json.
 """
 import json, os
@@ -15,14 +12,10 @@ from scipy.signal import butter, sosfiltfilt, iirnotch, filtfilt, welch, medfilt
 from build_banks import load, write_wav, SR, OUT
 
 VARIANTS = [
-    dict(id='I1', name='Ford Mustang 5.0 (1985)', src='119449', t0=1.5, t1=17.6, rpm=705,
-         credit='lmbubec, Freesound, CC0'),
-    dict(id='I2', name='Chevrolet Corvette', src='637181', t0=2.0, t1=17.2, rpm=635,
-         credit='kyles, Freesound, CC0'),
     dict(id='I3', name='Chrysler V8 at the tailpipe', src='240671', t0=4.0, t1=34.0, rpm=805,
          credit='lonemonk, Freesound, CC BY 4.0'),
-    dict(id='I4', name='Mustang GT500 (same car as driving), re-sequenced', src='205511', t0=0.03, t1=1.15,
-         rpm=950, credit='VacekH, Freesound, CC0', shuffle=True, lowpass=1500),
+    dict(id='I1', name='Ford Mustang 5.0 (1985)', src='119449', t0=1.5, t1=17.6, rpm=705,
+         credit='lmbubec, Freesound, CC0'),
 ]
 TARGET_DB = -20.0
 
@@ -64,40 +57,6 @@ def seamless_loop(x, xf_s=1.0):
     return y, best
 
 
-def shuffle_cycles(x, rpm, seconds=24.0, seed=5):
-    """Cut the idle into single engine cycles and re-sequence them randomly, aligned and crossfaded."""
-    period = int(round(SR * 120 / rpm))
-    # refine the period from the autocorrelation
-    ac = np.correlate(x, x, 'full')[len(x) - 1:]
-    lo, hi = int(period * 0.85), int(period * 1.15)
-    period = lo + int(np.argmax(ac[lo:hi]))
-    starts = [0]
-    while starts[-1] + 2 * period < len(x):
-        p = starts[-1] + period
-        ref = x[starts[-1]:starts[-1] + period]
-        w = int(period * 0.06)
-        cs = [np.dot(ref, x[p + d:p + d + period]) for d in range(-w, w + 1)]
-        starts.append(p - w + int(np.argmax(cs)))
-    cycles = [x[s:s + period + period // 4] for s in starts]
-    rng = np.random.default_rng(seed)
-    out = np.zeros(int(seconds * SR) + 2 * period)
-    xf = period // 4
-    fade = np.sin(np.linspace(0, np.pi / 2, xf)) ** 2
-    pos, last = 0, -1
-    while pos + period + xf < len(out):
-        k = rng.integers(len(cycles))
-        if k == last:
-            k = (k + 1) % len(cycles)
-        last = k
-        c = cycles[k].copy()
-        c[:xf] *= fade
-        c[-xf:] *= fade[::-1]
-        out[pos:pos + len(c)] += c
-        pos += period
-    y = out[xf:int(seconds * SR)]
-    return seamless_loop(y, 0.3)[0], len(cycles), period
-
-
 def main():
     meta = []
     hp = butter(2, 25, 'highpass', fs=SR, output='sos')
@@ -105,15 +64,8 @@ def main():
         x = load(v['src'])[int(v['t0'] * SR):int(v['t1'] * SR)]
         x = sosfiltfilt(hp, x)
         x, tones = notch_tones(x)
-        if v.get('lowpass'):
-            # the GT500 idle has intermittent 2-4 kHz chirps (the "beep"); real idle content sits below
-            x = sosfiltfilt(butter(8, v['lowpass'], fs=SR, output='sos'), x)
-        if v.get('shuffle'):
-            y, ncyc, per = shuffle_cycles(x, v['rpm'])
-            info = f'{ncyc} cycles of {per / SR * 1000:.0f} ms'
-        else:
-            y, corr = seamless_loop(x)
-            info = f'seam corr {corr:.2f}'
+        y, corr = seamless_loop(x)
+        info = f'seam corr {corr:.2f}'
         y *= 10 ** (TARGET_DB / 20) / np.sqrt(np.mean(y ** 2))
         peak = np.abs(y).max()
         if peak > 0.97:

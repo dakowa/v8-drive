@@ -2,22 +2,6 @@
  "sr": 32000,
  "idles": [
   {
-   "id": "I1",
-   "name": "Ford Mustang 5.0 (1985)",
-   "rpm": 705,
-   "file": "idle_I1.wav",
-   "credit": "lmbubec, Freesound, CC0",
-   "seconds": 15.0
-  },
-  {
-   "id": "I2",
-   "name": "Chevrolet Corvette",
-   "rpm": 635,
-   "file": "idle_I2.wav",
-   "credit": "kyles, Freesound, CC0",
-   "seconds": 13.95
-  },
-  {
    "id": "I3",
    "name": "Chrysler V8 at the tailpipe",
    "rpm": 805,
@@ -26,12 +10,12 @@
    "seconds": 28.88
   },
   {
-   "id": "I4",
-   "name": "Mustang GT500 (same car as driving), re-sequenced",
-   "rpm": 950,
-   "file": "idle_I4.wav",
-   "credit": "VacekH, Freesound, CC0",
-   "seconds": 23.64
+   "id": "I1",
+   "name": "Ford Mustang 5.0 (1985)",
+   "rpm": 705,
+   "file": "idle_I1.wav",
+   "credit": "lmbubec, Freesound, CC0",
+   "seconds": 15.0
   }
  ]
 }

@@ -1,12 +1,11 @@
-"""Build the two V8 sample banks used by the web app from real recordings.
+"""Build the V8 loop bank used by the web app from real recordings.
 
 Sources: Ford Mustang GT500 recordings by VacekH on Freesound (CC0), see sources.json.
 RPM tracks (tools/data/tracks.json) were measured from the recordings' firing-order
 harmonics (firing frequency = rpm / 15 for a V8) with a Viterbi comb tracker.
 
 Outputs (docs/audio/):
-  bankA.wav + bankA.json  -- approach A: phase-aligned constant-RPM loops (on/off load)
-  bankB.wav + bankB.json  -- approach B: the continuous recordings + per-frame RPM/load map
+  bankA.wav + bankA.json  -- phase-aligned constant-RPM loops (on/off load)
 """
 import json, os, subprocess, sys
 import numpy as np
@@ -16,7 +15,6 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(ROOT, '..', 'docs', 'audio')
 SR = 32000
 CYC = 256                      # angle-domain samples per engine cycle (720 deg) for alignment
-FRAME = 0.010                  # bank B metadata frame (s)
 
 try:
     import imageio_ffmpeg
@@ -113,45 +111,7 @@ def main():
         return cycle_offset(seg.angle_cycles(p0, ncyc).mean(0), ref)
 
     os.makedirs(OUT, exist_ok=True)
-    build_b(segs, local_offset)
     build_a(segs, local_offset)
-
-
-# ---------------------------------------------------------------- bank B
-
-def build_b(segs, local_offset):
-    audio, meta = [], []
-    pos = 0
-    for si, s in enumerate(segs):
-        n = len(s.x)
-        hop = int(FRAME * SR)
-        frames = []
-        # per-frame class -> slowly varying normalisation gain toward class loudness
-        cls_per = [classify(s.rpm[j], s.slope[j]) for j in range(0, n, hop)]
-        win = min(int(1.0 * SR), n - 1)
-        env = np.sqrt(np.convolve(s.x ** 2, np.ones(win) / win, 'same') + 1e-10)
-        tgt = np.array([10 ** (RMS_TARGET[c] / 20) for c in cls_per])
-        tgt = np.convolve(np.repeat(tgt, hop)[:n], np.ones(win) / win, 'same')
-        y = s.x * np.clip(tgt / env, 0.1, 8)
-        for k, j in enumerate(range(0, n, hop)):
-            c = cls_per[k]
-            off = local_offset(s, j)
-            frames.append([round(s.rpm[j], 1), round(float(s.slope[j]), 0), LOAD[c],
-                           round(float(s.phi[j] - off), 4)])
-        meta.append(dict(fid=s.fid, start=pos, length=n, t0=round(s.t0, 3),
-                         pref=0.0 if s.fid == '205511' else (0.4 if s.fid == '205508' else 0.15),
-                         frames=frames))
-        audio.append(y)
-        pos += n
-    y = np.concatenate(audio)
-    peak = np.abs(y).max()
-    if peak > 0.98:
-        y *= 0.98 / peak
-        print('B scaled by', 0.98 / peak)
-    write_wav(os.path.join(OUT, 'bankB.wav'), y)
-    json.dump(dict(sr=SR, frame=FRAME, segments=meta), open(os.path.join(OUT, 'bankB.json'), 'w'),
-              separators=(',', ':'))
-    print('bank B', round(len(y) / SR, 1), 's')
 
 
 # ---------------------------------------------------------------- bank A
