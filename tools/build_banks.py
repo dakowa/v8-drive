@@ -116,6 +116,8 @@ def main():
 
 # ---------------------------------------------------------------- bank A
 
+# v9: loops from 1100 to 2100 rpm are picked for the least warp (the rest is as in v8)
+LOW_FIX = (1000, 2100)
 POINTS = [900, 1100, 1300, 1500, 1700, 1900, 2100, 2350, 2600, 2850, 3100, 3350, 3600, 3850, 4100, 4400]
 
 
@@ -126,24 +128,51 @@ def build_a(segs, local_offset):
         for j in range(0, len(s.x), int(0.02 * SR)):
             cand.append((si, j, s.rpm[j], classify(s.rpm[j], s.slope[j])))
     loops, audio, pos = [], [], 0
+
+    def warp(s, j, P, K):
+        """Largest RPM deviation from P (log) over the K cycles a loop at sample j would use."""
+        a = np.searchsorted(s.phi, s.phi[j] - K / 2 - 1)
+        b = np.searchsorted(s.phi, s.phi[j] + K / 2 + 1)
+        r = s.rpm[a:b]
+        return float(np.abs(np.log(r / P)).max())
+
+    def pick(pool, P, K):
+        best = None
+        low = LOW_FIX[0] <= P <= LOW_FIX[1]
+        if low:
+            # the recordings have no steady stretches here, only sweeps: of the sources within
+            # 6% of P, take the one whose RPM varies least over the loop (loops are time-warped
+            # to a constant RPM, so a sweeping source warbles)
+            near = [c for c in pool if abs(np.log(c[2] / P)) < 0.06]
+            if near:
+                pool = near
+        for si, j, r, c in pool:
+            s = segs[si]
+            cost = (0.0 if low else abs(np.log(r / P)) * 10) + (0.0 if s.fid == '205511' else 0.25)
+            # prefer enough room around the point
+            if j < 0.25 * SR or len(s.x) - j < 0.6 * SR:
+                cost += 1.0
+            if low and (best is None or cost < best[0]):
+                cost += warp(s, j, P, K) * 10
+            if best is None or cost < best[0]:
+                best = (cost, si, j)
+        return best
+
     for layer, classes in (('ON', ('ON',)), ('OFF', ('OFF',))):
         for P in POINTS:
+            K = max(4, int(round(P / 120 * 0.75)))          # ~0.75 s of engine cycles
             want = ('IDLE',) if P < 1000 else classes
             pool = [c for c in cand if c[3] in want]
             if layer == 'ON' and P >= 1000:
                 pool += [c for c in cand if c[3] == 'CRUISE' and abs(np.log(c[2] / P)) < 0.04]
-            best = None
-            for si, j, r, c in pool:
-                s = segs[si]
-                cost = abs(np.log(r / P)) * 10 + (0.0 if s.fid == '205511' else 0.25)
-                # prefer enough room around the point
-                if j < 0.25 * SR or len(s.x) - j < 0.6 * SR:
-                    cost += 1.0
-                if best is None or cost < best[0]:
-                    best = (cost, si, j)
+            best = pick(pool, P, K)
+            if (layer == 'OFF' and LOW_FIX[0] <= P <= LOW_FIX[1]
+                    and abs(np.log(segs[best[1]].rpm[best[2]] / P)) > 0.06):
+                # no off-load recording near this RPM: the on-load sound at the right RPM (played at
+                # the off-load level) beats an off-load one sped up or slowed down by 10-30%
+                best = pick([c for c in cand if c[3] in ('ON', 'CRUISE')], P, K)
             _, si, j = best
             s = segs[si]
-            K = max(4, int(round(P / 120 * 0.75)))          # ~0.75 s of engine cycles
             Nc = int(round(SR * 120 / P))                  # output samples per cycle at P
             off = local_offset(s, j)
             ph0 = np.floor(s.phi[j] - off - K / 2) + off      # aligned integer phase start
@@ -165,7 +194,8 @@ def build_a(segs, local_offset):
             cls = 'IDLE' if P < 1000 else layer
             body *= norm_gain(body, cls)
             loops.append(dict(layer=layer, rpm=P, cycles=Kuse, nc=Nc, start=pos, length=len(body),
-                              src=s.fid, srcRpm=round(float(s.rpm[j]), 0), t=round(s.t0 + j / SR, 2)))
+                              src=s.fid, srcRpm=round(float(s.rpm[j]), 0), t=round(s.t0 + j / SR, 2),
+                              warp=round(warp(s, j, P, Kuse), 3)))
             audio.append(body)
             pos += len(body)
             print(f'A {layer:3s} {P:5d}  src {s.fid} t={s.t0 + j / SR:6.2f} rpm={s.rpm[j]:6.0f} K={Kuse}')
