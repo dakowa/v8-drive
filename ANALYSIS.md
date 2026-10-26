@@ -21,7 +21,7 @@ finished real drive goes to the private repo `dakowa/v8-drive-logs` as
    await r.renderSpan('mark1_now', d, t - 8, t + 3, { ...__v8.banks });            // as heard
    await r.renderSpan('mark1_B', d, t - 8, t + 3, { ...__v8.banks, over: {...} }); // proposed
    ```
-   Renders go to the dev upload server (`render_<name>.wav`). Listen to them, or send them to
+   Renders are saved by `python tools/render_sink.py` (run it first) to `listen/render_<name>.wav`. Listen to them, or send them to
    the user as an A/B.
 4. **Propose, don't silently change.** The user steers by A/B. Turn findings into either new
    defaults with numbers ("your pulls peak at 0.24 g median, so the 4k band at 0.32 g is
