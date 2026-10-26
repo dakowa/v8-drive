@@ -399,7 +399,19 @@ function showPage(id) {
   }
 }
 
+// The previous release stays playable at prev/ (tools/release.sh), one tap away.
+function initVersion() {
+  const a = $('verLink');
+  a.textContent = 'v' + VERSION;
+  const inPrev = /\/prev\/(index\.html)?$/.test(location.pathname);
+  fetch((inPrev ? '../' : '') + 'versions.json', { cache: 'no-store' }).then((r) => r.json()).then((j) => {
+    if (inPrev) { a.href = '../'; a.textContent = `v${VERSION} (previous) · back to v${j.current}`; }
+    else if (j.prev) { a.href = 'prev/'; a.textContent = `v${VERSION} · try v${j.prev}`; }
+  }).catch(() => {});
+}
+
 function initUI() {
+  initVersion();
   document.querySelectorAll('#lowAb button').forEach((b) => b.addEventListener('click', () => setAB(b.dataset.m)));
   setAB(cfg.lowSpeed || 'A');
   document.querySelectorAll('#pitchAb button').forEach((b) => b.addEventListener('click', () => setPitchAB(b.dataset.m)));
