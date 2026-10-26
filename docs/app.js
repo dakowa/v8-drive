@@ -8,8 +8,11 @@ const VERSION = '8';   // bump with each release (also in index.html and the imp
 
 // ------------------------------------------------------------------ settings
 const SETTINGS_KEY = 'v8drive.settings';
-const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, autoRec: true };
-const SETTINGS_VERSION = 5;   // v5: back to one engine (Mustang GT500 + Chrysler idle), pitch A/B
+const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, autoRec: true, sound: 'I3' };
+const SETTINGS_VERSION = 6;   // v9: idle picker back (cfg.sound), pitch and low-speed A/B retired
+// Settings earlier releases used. Deleted on every load, not once: the previous release at
+// /prev/ shares this storage and may write them back.
+const RETIRED = ['mode', 'engine', 'idle', 'idleByEngine', 'lowSpeed', 'pitchMode', 'downMode'];
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch (e) { return {}; }
 }
@@ -21,10 +24,8 @@ function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(cfg)); } catch (e) { /* private mode */ }
 }
 const cfg = { ...DEFAULTS, ...UI_DEFAULTS, ...loadSettings() };
-if ((cfg.version || 0) < 3) cfg.idle = UI_DEFAULTS.idle;
-if ((cfg.version || 0) < 4) delete cfg.downMode;
-if ((cfg.version || 0) < 5) cfg.version = SETTINGS_VERSION;
-for (const k of ['mode', 'engine', 'idle', 'idleByEngine', 'lowSpeed', 'pitchMode']) delete cfg[k];
+for (const k of RETIRED) delete cfg[k];
+cfg.version = SETTINGS_VERSION;
 savedCfg = { ...cfg };
 
 // ------------------------------------------------------------------ state
@@ -33,7 +34,8 @@ const drive = new Drivetrain(cfg);
 const sim = new SimCar();
 let simPedal = 0, simRegen = 1, simBrake = 0;
 let ctx = null, node = null, master = null;
-let banks = null;
+let banks = null;            // {bank, idle}: the loop bank and the idle playing now
+let idles = null;            // {sr, idles: [...]}, each idle's .data loaded when first picked
 const recorder = new Recorder();
 let drivesView = null;
 let lastEventN = 0;
@@ -78,23 +80,55 @@ async function fetchProgress(url, onBytes) {
   return out.buffer;
 }
 
-// One engine: Mustang GT500 loop bank + Chrysler idle (the pairing chosen in v3).
+// One engine, the Mustang GT500 loop bank, with a choice of real idle recordings (as in v3).
+async function loadIdle(id, prog = () => {}) {
+  const v = idles.idles.find((x) => x.id === id);
+  if (!v.data) {
+    v.data = parseWav(await fetchProgress('audio/' + v.file + '?v=' + VERSION, prog)).data;
+    v.sr = idles.sr;
+  }
+  return v;
+}
+
+async function selectIdle(id) {
+  cfg.sound = id; saveSettings();
+  renderIdlePicker();
+  const v = await loadIdle(id);
+  if (cfg.sound !== id) return;   // another idle was picked while this one loaded
+  banks.idle = v;
+  cfg.idleRpm = v.rpm;
+  drive.rpm = Math.max(drive.rpm, v.rpm * 0.95);
+  if (node) node.port.postMessage({ type: 'idle', sr: v.sr, rpm: v.rpm, data: v.data, length: v.data.length - 2 });
+}
+
+function renderIdlePicker() {
+  const box = $('idlePick');
+  if (!idles) return;
+  box.innerHTML = '';
+  for (const v of idles.idles) {
+    const b = document.createElement('button');
+    b.className = 'idleBtn' + (v.id === cfg.sound ? ' on' : '');
+    b.innerHTML = `<b>${v.id}</b><span>${v.name}</span><small>${v.rpm} rpm · ${v.seconds.toFixed(0)} s loop</small>`;
+    b.addEventListener('click', () => selectIdle(v.id));
+    box.appendChild(b);
+  }
+}
+
 async function loadBanks() {
-  let got = 0;
-  const total = 2.9e6;
-  const prog = (b) => { got += b; $('startBtn').textContent = `Loading sounds… ${Math.min(99, Math.round(got / total * 100))}%`; };
-  const [bank, idleList] = await Promise.all([
+  const [bank, list] = await Promise.all([
     fetch('audio/bankA.json?v=' + VERSION).then((r) => r.json()),
     fetch('audio/idles.json?v=' + VERSION).then((r) => r.json()),
   ]);
-  const idle = idleList.idles.find((v) => v.id === 'I3');
-  const [bw, iw] = await Promise.all([
-    fetchProgress('audio/bankA.wav?v=' + VERSION, prog),
-    fetchProgress('audio/' + idle.file + '?v=' + VERSION, prog),
-  ]);
+  idles = list;
+  if (!idles.idles.find((v) => v.id === cfg.sound)) cfg.sound = UI_DEFAULTS.sound;
+  const pick = idles.idles.find((v) => v.id === cfg.sound);
+  // 16-bit mono WAVs: bytes from the loop lengths and the idle's duration
+  const bankBytes = 2 * Math.max(...bank.loops.map((l) => l.start + l.length));
+  let got = 0;
+  const total = bankBytes + 2 * pick.seconds * idles.sr;
+  const prog = (b) => { got += b; $('startBtn').textContent = `Loading sounds… ${Math.min(99, Math.round(got / total * 100))}%`; };
+  const [bw, idle] = await Promise.all([fetchProgress('audio/bankA.wav?v=' + VERSION, prog), loadIdle(cfg.sound, prog)]);
   bank.data = parseWav(bw).data;
-  idle.data = parseWav(iw).data;
-  idle.sr = idleList.sr;
   return { bank, idle };
 }
 
@@ -486,6 +520,7 @@ loadBanks().then((b) => {
   banks = b;
   cfg.idleRpm = b.idle.rpm;
   drive.rpm = Math.max(drive.rpm, cfg.idleRpm * 0.95);
+  renderIdlePicker();
   $('engineSub').textContent = 'Ford Mustang GT500 V8 · EV sound';
   $('startBtn').disabled = false;
   $('startBtn').textContent = 'Start engine';
@@ -493,4 +528,4 @@ loadBanks().then((b) => {
 sync();   // finish and upload drives from earlier sessions
 
 // test hook for automated checks
-window.__v8 = { sync, mark, cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, recorder, get drivesView() { return drivesView; }, store, setPedal: (p, r = p > 0 ? 0 : 1) => { simPedal = p; simRegen = r; }, setBrake: (b) => { simBrake = b; } };
+window.__v8 = { sync, mark, cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, get idles() { return idles; }, selectIdle, recorder, get drivesView() { return drivesView; }, store, setPedal: (p, r = p > 0 ? 0 : 1) => { simPedal = p; simRegen = r; }, setBrake: (b) => { simBrake = b; } };

@@ -14,6 +14,8 @@ from build_banks import load, write_wav, SR, OUT
 VARIANTS = [
     dict(id='I3', name='Chrysler V8 at the tailpipe', src='240671', t0=4.0, t1=34.0, rpm=805,
          credit='lonemonk, Freesound, CC BY 4.0'),
+    dict(id='I1', name='Ford Mustang 5.0 (1985)', src='119449', t0=1.5, t1=17.6, rpm=705,
+         credit='lmbubec, Freesound, CC0'),
 ]
 TARGET_DB = -20.0
 

@@ -24,6 +24,7 @@ const TOP_KNEE = 3700, TOP_CEIL = 4300;   // sound RPM where higher pitch starts
 // (standing and crawling the drivetrain holds the engine at 1.16-1.26 x idle RPM)
 const UP_R = 1.40, UP_LOAD = 0.30, DOWN_R = 1.30, DOWN_LOAD = 0.20;
 const FADE_UP = 0.05, FADE_DOWN = 0.30;   // s (engine in fast so pulling away bites at once)
+const IDLE_XF = 0.15;   // s, crossfade when another idle recording is picked while one plays
 
 class EngineSound extends AudioWorkletProcessor {
   constructor() {
@@ -36,12 +37,16 @@ class EngineSound extends AudioWorkletProcessor {
     this.phi = 0;
     this.bank = null; this.I = null;
     this.idlePos = 0;
+    this.Iold = null; this.oldPos = 0; this.xf = 0;
     this.port.onmessage = (e) => this.onMsg(e.data);
   }
 
   onMsg(m) {
     if (m.type === 'bank') this.bank = prepBank(m);
-    else if (m.type === 'idle') { this.I = m; this.idlePos = 0; }
+    else if (m.type === 'idle') {
+      if (this.I && this.mix < 0.999) { this.Iold = this.I; this.oldPos = this.idlePos; this.xf = 1; }
+      this.I = m; this.idlePos = 0;
+    }
     else if (m.type === 'state') {
       this.rpmT = m.rpm; this.loadT = m.load;
       if (m.pitch !== undefined) {
@@ -85,11 +90,21 @@ class EngineSound extends AudioWorkletProcessor {
 
   // ---------------------------------------------------------------- idle
   sampleIdle(S) {
-    const I = this.I, d = I.data, n = I.length;
-    const i = this.idlePos | 0, f = this.idlePos - i;
+    let s = this.readIdle(this.I, 'idlePos', S);
+    if (this.Iold) {
+      this.xf -= 1 / (IDLE_XF * sampleRate);
+      if (this.xf <= 0) this.Iold = null;
+      else s = Math.cos(this.xf * Math.PI / 2) * s + Math.sin(this.xf * Math.PI / 2) * this.readIdle(this.Iold, 'oldPos', S);
+    }
+    return s;
+  }
+
+  readIdle(I, pos, S) {
+    const d = I.data, n = I.length, x = this[pos];
+    const i = x | 0, f = x - i;
     const a = d[i], b = d[i + 1 < n ? i + 1 : 0];
-    this.idlePos += (S / I.rpm) * (I.sr / sampleRate);
-    if (this.idlePos >= n) this.idlePos -= n;
+    this[pos] = x + (S / I.rpm) * (I.sr / sampleRate);
+    if (this[pos] >= n) this[pos] -= n;
     return a + (b - a) * f;
   }
 

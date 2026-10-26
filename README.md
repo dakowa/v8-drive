@@ -30,12 +30,12 @@ With *Send drives for analysis* on, every finished real drive (GPS speed above 1
 - Simulator: bottom 20% of the pedal (and letting go) is lift-off regen, Ioniq 5 level 3 (~0.18 g).
 
 ## Idle
-A dedicated idle player loops a long, seamless real idle (1964 Chrysler V8 at the tailpipe, `tools/build_idles.py`) and crossfades into the engine sound as revs or throttle rise. Mustang 5.0, Corvette and re-sequenced GT500 idles were tried and dropped.
+A dedicated idle player loops a long, seamless real idle (`tools/build_idles.py`) and crossfades into the engine sound as revs or throttle rise. The "Idle sound" picker on the Drive page chooses the recording, as in v3: I3, a 1964 Chrysler V8 at the tailpipe (default), or I1, a 1985 Ford Mustang 5.0. The choice is saved as the `sound` setting and recorded in each drive log; picking another idle while one plays crossfades over 150 ms. Corvette, Camaro and re-sequenced GT500 idles were tried and dropped.
 
 ## Rebuilding the sample banks
 `tools/build_banks.py` (numpy, scipy, imageio-ffmpeg) reads `tools/cache/*.ogg` and the measured RPM tracks in `tools/data/tracks.json`, writes `docs/audio/bankA.{wav,json}`. The GT500 recordings have no steady stretches between idle and ~2000 rpm, only sweeps, so the 1100–2100 rpm loops are picked for the least RPM variation within 6% of their target (from v9), and off-throttle loops there use the on-throttle sound at the right RPM rather than an off-throttle one 10–30% off.
 
 ## Credits
-Recordings (Freesound): Mustang GT500 by VacekH, CC0 (205501, 205503, 205508, 205510, 205511). Idle: 1964 Chrysler Windsor by lonemonk, CC BY 4.0 (240671).
+Recordings (Freesound): Mustang GT500 by VacekH, CC0 (205501, 205503, 205508, 205510, 205511). Idles: 1964 Chrysler Windsor by lonemonk, CC BY 4.0 (240671); 1985 Ford Mustang 5.0 by lmbubec, CC0 (119449).
 
 Map data © OpenStreetMap contributors.
