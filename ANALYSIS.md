@@ -18,8 +18,8 @@ finished real drive goes to the private repo `dakowa/v8-drive-logs` as
    const d = await r.loadDrive('dev/drives/v8drive-….json.gz');
    r.check(d)                                 // replay vs log; should agree closely
    r.compare(d, r.replay(d, { gMed: 0.18 }))  // what a setting change would have done
-   await r.renderSpan('mark1_now', d, t - 8, t + 3, { ...__v8.banks });            // as heard
-   await r.renderSpan('mark1_B', d, t - 8, t + 3, { ...__v8.banks, over: {...} }); // proposed
+   await r.renderSpan('moment_now', d, t - 8, t + 3, { ...__v8.banks });            // as heard
+   await r.renderSpan('moment_B', d, t - 8, t + 3, { ...__v8.banks, over: {...} }); // proposed
    ```
    Renders are saved by `python tools/render_sink.py` (run it first) to `listen/render_<name>.wav`. Listen to them, or send them to
    the user as an A/B.
@@ -39,7 +39,7 @@ finished real drive goes to the private repo `dakowa/v8-drive-logs` as
 | shifts.upRpm, hunting | Reversals within 3 s, upshift RPM far from intended | Drivetrain hysteresis or kickdown logic |
 | rpm.soundRpmAboveTopLoopS | Many seconds past 4400 sound rpm | The recordings end there; above pitch 1.10 the sound flattens out |
 | lowSpeed | Time and RPM at 5–15 km/h (`mode` is the A/B of drives before v9) | Compare drives across versions (appVersion) |
-| marks | What happened in the 6 s before each "sounded wrong / great" tap | The best clue; replay and render those moments |
+| marks | Only in v7–v9 drives (the buttons are gone since v10): the 6 s before each "sounded wrong / great" tap | Replay and render those moments. From v10 the user says in chat what sounded off; find that moment by time, speed or gear |
 
 ## The log format (version 3)
 
@@ -51,7 +51,7 @@ finished real drive goes to the private repo `dakowa/v8-drive-logs` as
 - **motion** (every devicemotion event, ~60 Hz): linear accel `ax..az`, accel with gravity
   `gx..gz`, rotation rate `ra, rb, rg` deg/s. This is enough to re-run Fusion offline.
 - **events** `[t, kind, …]`: `up/down/kickdown` (from, to, rpm); `mark` (wrong|great, rpm, gear,
-  km/h); `set` (key, value) for settings changed mid-drive; `sim` (0/1); `obd` (speed);
+  km/h; v7–v9 only); `set` (key, value) for settings changed mid-drive; `sim` (0/1; before v10, which no longer records the simulator); `obd` (speed);
   `hidden/visible`; `stop`.
 
 Times are seconds from the start of the drive, on the phone's `performance.now()` clock.

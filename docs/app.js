@@ -273,15 +273,26 @@ async function start() {
   else $('loadInfo').textContent = 'Motion access denied. Use the simulator, or allow Motion & Orientation access in Safari settings.';
   requestWakeLock();
   running = true;
-  if (cfg.autoRec && !recorder.active) {
-    recorder.start({ engine: 'gt500', sim: $('simOn').checked, settings: { ...cfg } });
-  }
+  startRec();
   btn.disabled = false; btn.textContent = 'Stop'; btn.classList.add('stop');
+}
+
+// only real drives are recorded: never while the simulator is on
+let recStopping = Promise.resolve();
+function startRec() {
+  recStopping.then(() => {
+    if (running && cfg.autoRec && !$('simOn').checked && !recorder.active) {
+      recorder.start({ engine: 'gt500', settings: { ...cfg } });
+    }
+  });
+}
+function stopRec() {
+  recStopping = recorder.stop().then(() => sync()).then(() => drivesView && drivesView.refresh());
 }
 
 function stop() {
   running = false;
-  recorder.stop().then(() => sync()).then(() => drivesView && drivesView.refresh());
+  stopRec();
   sendState(true);
   const btn = $('startBtn');
   btn.textContent = 'Start engine'; btn.classList.remove('stop');
@@ -313,7 +324,7 @@ function tick() {
   }
   drive.update(v, aq, dt, a);
   sendState(false);
-  if ($('simOn').checked !== lastSim) { lastSim = $('simOn').checked; recorder.note(now, 'sim', lastSim ? 1 : 0); }
+  if ($('simOn').checked !== lastSim) { lastSim = $('simOn').checked; if (!lastSim) startRec(); else if (recorder.active) stopRec(); }
   if (recorder.active) {
     recorder.row(now, v, a, $('simOn').checked ? a : fusion.aLong, drive, aq);
     if (drive.events.length !== lastEventN || drive.events[drive.events.length - 1] !== recorder.lastEv) {
@@ -411,17 +422,6 @@ function bindCheck(id, onChange) {
   el.addEventListener('change', () => { cfg[id] = el.checked; saveSettings(); onChange && onChange(); });
 }
 
-// one tap while driving: what you heard right now, so the analysis can look at that moment
-function mark(what) {
-  if (!recorder.active) { $('loadInfo').textContent = 'Start the engine first: marks go into the drive log.'; return; }
-  const now = performance.now() / 1000;
-  recorder.note(now, 'mark', what, Math.round(drive.rpm), drive.gear, +(ui.v * 3.6).toFixed(1));
-  const t = Math.round(now - recorder.t0);
-  $('markInfo').textContent = `Marked "${what}" at ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')} · ${Math.round(ui.v * 3.6)} km/h, gear ${drive.gear}, ${Math.round(drive.rpm)} rpm`;
-  const b = $(what === 'wrong' ? 'markBad' : 'markGood');
-  b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 600);
-}
-
 function sync() {
   return syncDrives(VERSION, recorder.active ? recorder.id : null)
     .then((s) => { $('upStatus').textContent = s; drivesView && drivesView.refresh(); })
@@ -479,8 +479,6 @@ function initUI() {
   bindCheck('autoRec');
   document.querySelectorAll('.metricBtn').forEach((b) => b.addEventListener('click', () => drivesView && drivesView.setMetric(b.dataset.m)));
   $('driveExport').addEventListener('click', () => drivesView && drivesView.drive && exportDrive(drivesView.drive, VERSION));
-  $('markBad').addEventListener('click', () => mark('wrong'));
-  $('markGood').addEventListener('click', () => mark('great'));
   initUpload();
   $('driveDelete').addEventListener('click', () => { if (drivesView && drivesView.drive && confirm('Delete this drive?')) drivesView.remove(); });
   $('importFile').addEventListener('change', async (e) => {
@@ -589,4 +587,4 @@ loadBanks().then((b) => {
 sync();   // finish and upload drives from earlier sessions
 
 // test hook for automated checks
-window.__v8 = { sync, mark, cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, get idles() { return idles; }, selectIdle, selectLow, recorder, get drivesView() { return drivesView; }, store, setPedal: (p, r = p > 0 ? 0 : 1) => { simPedal = p; simRegen = r; }, setBrake: (b) => { simBrake = b; } };
+window.__v8 = { sync, cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, get idles() { return idles; }, selectIdle, selectLow, recorder, get drivesView() { return drivesView; }, store, setPedal: (p, r = p > 0 ? 0 : 1) => { simPedal = p; simRegen = r; }, setBrake: (b) => { simBrake = b; } };
