@@ -500,10 +500,17 @@ function initUI() {
   sel.addEventListener('change', () => { cfg.trans = sel.value; drive.setTransmission(sel.value); saveSettings(); });
   bindRange('vol', (x) => Math.round(x * 100) + '%', () => master && master.gain.setTargetAtTime(cfg.vol, ctx.currentTime, 0.05));
   bindRange('pitch', (x) => x.toFixed(2) + '×');
-  bindRange('gSlow', (x) => x.toFixed(2) + ' g');
-  bindRange('gMed', (x) => x.toFixed(2) + ' g');
-  bindRange('gFast', (x) => x.toFixed(2) + ' g');
-  bindRange('gMax', (x) => x.toFixed(2) + ' g');
+  for (const id of ['gSlow', 'gMed', 'gFast', 'gMax']) bindRange(id, (x) => x.toFixed(2) + ' g');
+  // upshift rpm per tier; moving one pushes the others so gentle <= medium <= hard <= maximum
+  const TIERS = ['rpmSlow', 'rpmMed', 'rpmFast', 'rpmMax'];
+  const rpmFmt = (x) => x + ' rpm';
+  for (const [i, id] of TIERS.entries()) bindRange(id, rpmFmt, () => {
+    TIERS.forEach((o, j) => {
+      const v = j < i ? Math.min(cfg[o], cfg[id]) : j > i ? Math.max(cfg[o], cfg[id]) : cfg[o];
+      if (v !== cfg[o]) { cfg[o] = v; $(o).value = v; $(o + 'O').textContent = rpmFmt(v); }
+    });
+    saveSettings();
+  });
   bindRange('downRpm', (x) => x + ' rpm');
   bindCheck('downFollow');
   const sm = $('sportMinRpm'), smO = $('sportMinRpmO');

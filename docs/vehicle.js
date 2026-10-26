@@ -27,6 +27,7 @@ export const DEFAULTS = {
   idleRpm: 705,             // set from the chosen idle recording
   // Aggression (g of longitudinal acceleration) -> upshift RPM, as requested:
   // slow -> 2000, medium -> 3000, fast -> 4000, maximum -> 5000, interpolated in between.
+  // Both are adjustable per tier (upshift rpm 1500-6000).
   gSlow: 0.10, gMed: 0.20, gFast: 0.32, gMax: 0.45,
   rpmSlow: 2000, rpmMed: 3000, rpmFast: 4000, rpmMax: 5000,
   // Slowing down: rev-matched downshift once revs fall below downRpm (2000-4000), or, with
@@ -367,7 +368,7 @@ export class Drivetrain {
         // would shift. One gear normally; two at full demand (like real multi-gear kickdowns,
         // which are gated by high throttle), never past the gear that would exceed the target.
         const T = this.shiftPoint(Math.max(gL, 0));
-        const fits = (g) => g >= 2 && this.wheelRpm(v, g) <= Math.min(T * 0.95, 5500);
+        const fits = (g) => g >= 2 && this.wheelRpm(v, g) <= T * 0.95;
         const wantsKick = this.gear >= 3 && (dem >= 0.6 || (dem >= 0.4 && demRate > 2.5)) && rpm < T * 0.62;
         // judge the pedal over 150 ms, then pick the target gear in one go (like a real TCU)
         this.kickT = wantsKick ? this.kickT + dt : 0;

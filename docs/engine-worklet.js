@@ -20,6 +20,7 @@ const TAU_LOAD = 0.035;
 const TAU_GAIN = 0.05;
 const PITCH_SAFE = 1.10;
 const TOP_KNEE = 3700, TOP_CEIL = 4300;   // sound RPM where higher pitch starts to flatten out
+const HI_KNEE = 5000, HI_CEIL = 5600;     // above this, any pitch: the top loop (4400) is 1.14x
 // idle -> engine above 1.40 x idle RPM or load 0.30; back below 1.30 x idle RPM and load 0.20
 // (standing and crawling the drivetrain holds the engine at 1.16-1.26 x idle RPM)
 const UP_R = 1.40, UP_LOAD = 0.30, DOWN_R = 1.30, DOWN_LOAD = 0.20;
@@ -138,12 +139,17 @@ class EngineSound extends AudioWorkletProcessor {
 }
 
 // Sound RPM of the loop bank. Up to pitch 1.10 it is RPM x pitch. Above that the top is
-// soft-limited to TOP_CEIL (the recordings end there), but never below RPM x 1.10.
+// soft-limited to TOP_CEIL (the recordings end there), but never below RPM x 1.10. Shift points
+// above 5000 rpm (up to 6000) rise more slowly still: nothing was recorded up there.
 function bankRpm(rpm, p) {
-  const s = rpm * p;
-  if (p <= PITCH_SAFE || s <= TOP_KNEE) return s;
-  const w = TOP_CEIL - TOP_KNEE;
-  return Math.max(rpm * PITCH_SAFE, TOP_KNEE + w * Math.tanh((s - TOP_KNEE) / w));
+  let s = rpm * p;
+  if (p > PITCH_SAFE && s > TOP_KNEE) {
+    const w = TOP_CEIL - TOP_KNEE;
+    s = Math.max(rpm * PITCH_SAFE, TOP_KNEE + w * Math.tanh((s - TOP_KNEE) / w));
+  }
+  if (s <= HI_KNEE) return s;
+  const h = HI_CEIL - HI_KNEE;
+  return HI_KNEE + h * Math.tanh((s - HI_KNEE) / h);
 }
 
 function smooth(a, b, x) {

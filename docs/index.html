@@ -51,6 +51,8 @@ summary::-webkit-details-marker { display: none; }
 .row small { color: var(--dim); display: block; font-size: 12px; }
 .row output { color: var(--dim); font-variant-numeric: tabular-nums; min-width: 54px; text-align: right; font-size: 13px; }
 input[type=range] { width: 46%; accent-color: var(--accent); }
+.tier .pair { width: 58%; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 8px; }
+.tier .pair input[type=range] { width: 100%; }
 select, input[type=text], input[type=password] { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 14px; max-width: 60%; }
 .btn { appearance: none; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px; font-size: 14px; font-weight: 600; }
 .btn.primary { background: var(--accent); color: #1a0700; border-color: transparent; }
@@ -180,10 +182,10 @@ a { color: var(--accent2); }
     <div class="row"><label>Gearbox<small>Mustang GT ratios</small></label><select id="trans"></select></div>
     <div class="row"><label>Volume</label><input type="range" id="vol" min="0" max="1.5" step="0.01"><output id="volO"></output></div>
     <div class="row"><label>Engine pitch<small>Scales RPM→sound. 1.00 = measured</small></label><input type="range" id="pitch" min="0.7" max="1.4" step="0.01"><output id="pitchO"></output></div>
-    <div class="row"><label>Gentle accel<small>Shift at 2000 rpm</small></label><input type="range" id="gSlow" min="0.04" max="0.2" step="0.01"><output id="gSlowO"></output></div>
-    <div class="row"><label>Medium accel<small>Shift at 3000 rpm</small></label><input type="range" id="gMed" min="0.1" max="0.35" step="0.01"><output id="gMedO"></output></div>
-    <div class="row"><label>Hard accel<small>Shift at 4000 rpm</small></label><input type="range" id="gFast" min="0.18" max="0.6" step="0.01"><output id="gFastO"></output></div>
-    <div class="row"><label>Maximum accel<small>Shift at 5000 rpm</small></label><input type="range" id="gMax" min="0.25" max="0.7" step="0.01"><output id="gMaxO"></output></div>
+    <div class="row tier"><label>Gentle accel<small>Acceleration, and the rpm it shifts up at</small></label><div class="pair"><input type="range" id="gSlow" min="0.04" max="0.2" step="0.01"><output id="gSlowO"></output><input type="range" id="rpmSlow" min="1500" max="6000" step="100"><output id="rpmSlowO"></output></div></div>
+    <div class="row tier"><label>Medium accel<small>Acceleration · upshift rpm</small></label><div class="pair"><input type="range" id="gMed" min="0.1" max="0.35" step="0.01"><output id="gMedO"></output><input type="range" id="rpmMed" min="1500" max="6000" step="100"><output id="rpmMedO"></output></div></div>
+    <div class="row tier"><label>Hard accel<small>Acceleration · upshift rpm</small></label><div class="pair"><input type="range" id="gFast" min="0.18" max="0.6" step="0.01"><output id="gFastO"></output><input type="range" id="rpmFast" min="1500" max="6000" step="100"><output id="rpmFastO"></output></div></div>
+    <div class="row tier"><label>Maximum accel<small>Up to 6000 rpm. Recordings end near 4400, so above 5000 the sound rises more slowly</small></label><div class="pair"><input type="range" id="gMax" min="0.25" max="0.7" step="0.01"><output id="gMaxO"></output><input type="range" id="rpmMax" min="1500" max="6000" step="100"><output id="rpmMaxO"></output></div></div>
     <div class="row"><label>Downshift when slowing at<small>Rev-matched downshift once revs drop below this</small></label><input type="range" id="downRpm" min="2000" max="4000" step="100"><output id="downRpmO"></output></div>
     <div class="row"><label>…raise it after hard driving<small>Follows your recent shift points (up to 4000)</small></label><input type="checkbox" id="downFollow"></div>
     <div class="row"><label>Sport mode: revs never below<small>Stays in a lower gear to keep revs up. Far left = off</small></label><input type="range" id="sportMinRpm" min="1500" max="4000" step="100"><output id="sportMinRpmO"></output></div>
