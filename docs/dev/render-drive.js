@@ -22,7 +22,10 @@ export async function render(name, { sr = 44100, dur = 43, engine, idle = null, 
   node.connect(ctx.destination);
   node.port.postMessage({ type: 'bank', sr: 32000, loops: engine.loops, pulses: engine.pulses, data: engine.data });
   const cfg = { ...DEFAULTS, lowSpeed, ...cfgOver };
-  if (idle) { node.port.postMessage({ type: 'idle', sr: 32000, rpm: idle.rpm, data: idle.data, length: idle.data.length - 2 }); cfg.idleRpm = idle.rpm; }
+  if (idle) {
+    cfg.idleRpm = Math.min(idle.rpm, 1050);
+    node.port.postMessage({ type: 'idle', sr: 32000, rpm: cfg.idleRpm, data: idle.data, length: idle.data.length - 2 });
+  }
   const drive = new Drivetrain(cfg);
   const car = new SimCar();
   const step = 1 / 60;

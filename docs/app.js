@@ -93,10 +93,14 @@ async function selectIdle(id) {
   cfg.idle = v0.id; cfg.idleByEngine[cfg.engine] = v0.id; saveSettings();
   renderIdlePicker();
   const v = await loadIdle(v0.id);
-  cfg.idleRpm = v.rpm;
-  drive.rpm = Math.max(drive.rpm, v.rpm * 0.95);
-  if (node) node.port.postMessage({ type: 'idle', sr: idles.sr, rpm: v.rpm, data: v.data, length: v.data.length - 2 });
+  // The drivetrain idles at most ~1050 rpm even if the recording is a cold fast idle (Ferrari
+  // 1480): otherwise gentle cruising would pin at idle revs and still sound like idling.
+  cfg.idleRpm = idleRef(v);
+  drive.rpm = Math.max(drive.rpm, cfg.idleRpm * 0.95);
+  if (node) node.port.postMessage({ type: 'idle', sr: idles.sr, rpm: cfg.idleRpm, data: v.data, length: v.data.length - 2 });
 }
+
+const idleRef = (v) => Math.min(v.rpm, 1050);
 
 function renderIdlePicker() {
   const box = $('idlePick');
@@ -254,7 +258,9 @@ function stop() {
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
 }
 
+window.addEventListener('pagehide', () => { recorder.flush(); });
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') recorder.flush();   // iOS may suspend the page any moment
   if (document.visibilityState === 'visible' && running) {
     if (ctx && ctx.state !== 'running') ctx.resume();
     requestWakeLock();
@@ -488,7 +494,7 @@ setInterval(updateChips, 500);
 updateChips();
 loadBanks().then((b) => {
   banks = b;
-  cfg.idleRpm = idleList().find((v) => v.id === cfg.idle).rpm;
+  cfg.idleRpm = idleRef(idleList().find((v) => v.id === cfg.idle));
   renderEnginePicker();
   renderIdlePicker();
   $('engineSub').textContent = curEngine().name + ' · EV sound';

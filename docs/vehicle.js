@@ -325,8 +325,12 @@ export class Drivetrain {
         // A, clutch: below ~12 km/h off the throttle the clutch is in and the engine idles;
         // pulling away slips the clutch at a launch speed until the wheels catch up.
         const launch = c.idleRpm + 250 + pedal * (700 + 900 * smoothstep(0.1, 0.35, this.aggr));
-        const declutch = v < 1.2 || (kmh < 12 && pedal < 0.15 && this.gear <= 2);
-        if (declutch) {
+        const declutch = pedal < 0.15 && (v < 1.2 || (kmh < 12 && this.gear <= 2));
+        if (v < 1.2 && !declutch) {
+          // pulling away from a standstill: bite immediately (as in v3)
+          this.gear = 1;
+          rpmT = Math.max(wr, c.idleRpm + pedal * (1100 + 900 * smoothstep(0.1, 0.35, this.aggr)));
+        } else if (declutch) {
           if (v < 5.5) this.gear = 1;
           // standing: same as the idle you approved (revs lift slightly with the throttle estimate)
           rpmT = c.idleRpm + Math.max(pedal, 0.12) * (1100 + 900 * smoothstep(0.1, 0.35, this.aggr));
@@ -340,8 +344,9 @@ export class Drivetrain {
       }
       // at low speed revs move like a clutch/converter engaging, not instantly with sensor noise
       if (slowSmooth) {
+        // rising revs follow quickly (throttle response), falling revs ease down like a clutch
         const prev = this.prevRpm || rpmT;
-        rpm = prev + (rpmT - prev) * (1 - Math.exp(-dt / 0.18));
+        rpm = prev + (rpmT - prev) * (1 - Math.exp(-dt / (rpmT > prev ? 0.03 : 0.18)));
       } else {
         rpm = rpmT;
       }
@@ -397,7 +402,8 @@ export class Drivetrain {
     }
     rpm = clamp(rpm, c.idleRpm * 0.95, 6500);
     // below ~20 km/h, smooth the throttle so road bumps don't flutter the sound between idle and engine
-    if (!this.shift && v < 5.5) this.loadS = (this.loadS ?? load) + (load - (this.loadS ?? load)) * (1 - Math.exp(-dt / 0.25));
+    // (only easing off is smoothed: pressing the pedal still bites at once)
+    if (!this.shift && v < 5.5 && load < (this.loadS ?? load)) this.loadS = this.loadS + (load - this.loadS) * (1 - Math.exp(-dt / 0.25));
     else this.loadS = load;
     load = this.loadS;
     this.rate = (rpm - this.prevRpm) / dt;
