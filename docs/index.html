@@ -117,7 +117,7 @@ a { color: var(--accent2); }
 <header>
   <h1>V8 Drive<small id="engineSub">Real engine recordings · EV sound</small></h1>
   <div class="hdrR">
-    <div class="ab" role="tablist" aria-label="Low-speed test"><button data-m="A" role="tab">A</button><button data-m="B" role="tab">B</button></div>
+    <div class="ab" id="lowAb" role="tablist" aria-label="Low-speed test"><button data-m="A" role="tab">A</button><button data-m="B" role="tab">B</button></div>
     <div class="tabs"><button data-p="drivePage" class="on">Drive</button><button data-p="drivesPage">Drives</button></div>
   </div>
 </header>
@@ -159,24 +159,13 @@ a { color: var(--accent2); }
 <button class="start" id="startBtn" disabled>Loading sounds…</button>
 <div class="load" id="loadInfo"></div>
 
-<div class="idleBox">
-  <h2>Engine</h2>
-  <p>Each engine is built from real recordings. Tap to switch, even while driving.</p>
-  <div id="enginePick"></div>
-</div>
-
-<div class="idleBox">
-  <h2>Idle sound</h2>
-  <p>Real idle recordings. Listen while stopped.</p>
-  <div id="idlePick"></div>
-</div>
-
 <details>
   <summary>Settings</summary>
   <div class="pad" id="settings">
     <div class="row"><label>Gearbox<small>Mustang GT ratios</small></label><select id="trans"></select></div>
     <div class="row"><label>Volume</label><input type="range" id="vol" min="0" max="1.5" step="0.01"><output id="volO"></output></div>
     <div class="row"><label>Engine pitch<small>Scales RPM→sound. 1.00 = measured</small></label><input type="range" id="pitch" min="0.7" max="1.4" step="0.01"><output id="pitchO"></output></div>
+    <div class="row"><label>Pitch test<small id="pitchAbInfo"></small></label><div class="ab" id="pitchAb"><button data-m="A">A</button><button data-m="B">B</button></div></div>
     <div class="row"><label>Gentle accel<small>Shift at 2000 rpm</small></label><input type="range" id="gSlow" min="0.04" max="0.2" step="0.01"><output id="gSlowO"></output></div>
     <div class="row"><label>Medium accel<small>Shift at 3000 rpm</small></label><input type="range" id="gMed" min="0.1" max="0.35" step="0.01"><output id="gMedO"></output></div>
     <div class="row"><label>Hard accel<small>Shift at 4000 rpm</small></label><input type="range" id="gFast" min="0.18" max="0.6" step="0.01"><output id="gFastO"></output></div>
@@ -210,9 +199,7 @@ a { color: var(--accent2); }
   <div class="pad note">
     <p><b>Sound engine.</b> Constant-RPM loops cut from the recordings every 200–300 rpm, on- and off-throttle. They're phase-aligned to the engine cycle and crossfaded by RPM and throttle. At idle, a long real idle recording plays untouched.</p>
     <p>Recordings: Ford Mustang GT500 by <a href="https://freesound.org/people/VacekH/" target="_blank" rel="noopener">VacekH</a> on Freesound (CC0). RPM was measured from the firing-order harmonics.</p>
-    <p>Idle recordings (Freesound): 1964 Chrysler Windsor by <a href="https://freesound.org/s/240671/" target="_blank" rel="noopener">lonemonk</a> (CC BY 4.0); 1985 Ford Mustang 5.0 by lmbubec (CC0).</p>
-    <p id="engineCredits"></p>
-    <p>Where an engine's recording doesn't cover an RPM, its firing pulses are re-spaced rather than sped up, so the exhaust resonances stay natural (also used for engine pitch above 1.1).</p>
+    <p>Idle recording: 1964 Chrysler Windsor by <a href="https://freesound.org/s/240671/" target="_blank" rel="noopener">lonemonk</a> on Freesound (CC BY 4.0).</p>
     <p>Map: © OpenStreetMap contributors. Drives are stored only on this phone.</p>
     <p>Gearing: S550 Mustang GT. 10R80 ratios from Ford's chart, MT82 manual ratios from CJ Pony Parts, 255/40R19 tyres.</p>
     <p>Keep the screen on with the app open. iOS stops web audio and sensors when the screen locks.</p>
@@ -250,6 +237,6 @@ a { color: var(--accent2); }
   </div>
 </section>
 
-<script type="module" src="app.js?v=5"></script>
+<script type="module" src="app.js?v=6"></script>
 </body>
 </html>

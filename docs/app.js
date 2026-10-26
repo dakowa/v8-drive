@@ -1,17 +1,21 @@
-import { Fusion, Drivetrain, SimCar, DEFAULTS, TRANSMISSIONS, G } from './vehicle.js?v=5';
-import { Obd, clean } from './obd.js?v=5';
-import { Recorder, DrivesView, store, normalizeImport, exportDrive } from './drives.js?v=5';
+import { Fusion, Drivetrain, SimCar, DEFAULTS, TRANSMISSIONS, G } from './vehicle.js?v=6';
+import { Obd, clean } from './obd.js?v=6';
+import { Recorder, DrivesView, store, normalizeImport, exportDrive } from './drives.js?v=6';
 
 const $ = (id) => document.getElementById(id);
-const VERSION = '5';   // bump with each release (also in index.html and the imports above)
+const VERSION = '6';   // bump with each release (also in index.html and the imports above)
 
 // ------------------------------------------------------------------ settings
 const SETTINGS_KEY = 'v8drive.settings';
-const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, idle: 'I3', engine: 'gt500', idleByEngine: {}, autoRec: true };
-const SETTINGS_VERSION = 4;   // v4: engines, low-speed A/B, sport mode, downshift slider
+const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, pitchMode: 'A', autoRec: true };
+const SETTINGS_VERSION = 5;   // v5: back to one engine (Mustang GT500 + Chrysler idle), pitch A/B
 const AB_INFO = {
   A: 'A · 5–15 km/h: idle recording + clutch (declutched when coasting, slipping on pull-away)',
   B: 'B · 5–15 km/h: engine in gear: its driving sound takes over as soon as you roll',
+};
+const PITCH_INFO = {
+  A: 'A: as v3. Everything follows the pitch, the idle too',
+  B: 'B: same as A up to 1.10. Above that, only the driving sound goes higher; above 5000 rpm it rises gently',
 };
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch (e) { return {}; }
@@ -21,16 +25,15 @@ function saveSettings() {
 }
 const cfg = { ...DEFAULTS, ...UI_DEFAULTS, ...loadSettings() };
 if ((cfg.version || 0) < 3) cfg.idle = UI_DEFAULTS.idle;
-if ((cfg.version || 0) < 4) { delete cfg.downMode; cfg.version = SETTINGS_VERSION; }
-delete cfg.mode;
+if ((cfg.version || 0) < 4) delete cfg.downMode;
+if ((cfg.version || 0) < 5) cfg.version = SETTINGS_VERSION;
+for (const k of ['mode', 'engine', 'idle', 'idleByEngine']) delete cfg[k];
 
 // ------------------------------------------------------------------ state
 const fusion = new Fusion(cfg);
 const drive = new Drivetrain(cfg);
 const sim = new SimCar();
 let simPedal = 0, simRegen = 1, simBrake = 0;
-let idles = null;            // {sr, idles:[...]} with .data loaded per variant on demand
-let engines = null;          // {sr, engines:[...]} with .data loaded per engine on demand
 let ctx = null, node = null, master = null;
 let banks = null;
 const recorder = new Recorder();
@@ -76,90 +79,24 @@ async function fetchProgress(url, onBytes) {
   return out.buffer;
 }
 
-function idleList() {
-  const own = engines && curEngine().idle;
-  return [...(own ? [own] : []), ...idles.idles];
-}
-function curEngine() { return engines.engines.find((e) => e.id === cfg.engine) || engines.engines[0]; }
-
-async function loadIdle(id, prog = () => {}) {
-  const v = idleList().find((x) => x.id === id) || idleList()[0];
-  if (!v.data) v.data = parseWav(await fetchProgress('audio/' + v.file + '?v=' + VERSION, prog)).data;
-  return v;
-}
-
-async function selectIdle(id) {
-  const v0 = idleList().find((x) => x.id === id) || idleList()[0];
-  cfg.idle = v0.id; cfg.idleByEngine[cfg.engine] = v0.id; saveSettings();
-  renderIdlePicker();
-  const v = await loadIdle(v0.id);
-  // The drivetrain idles at most ~1050 rpm even if the recording is a cold fast idle (Ferrari
-  // 1480): otherwise gentle cruising would pin at idle revs and still sound like idling.
-  cfg.idleRpm = idleRef(v);
-  drive.rpm = Math.max(drive.rpm, cfg.idleRpm * 0.95);
-  if (node) node.port.postMessage({ type: 'idle', sr: idles.sr, rpm: cfg.idleRpm, data: v.data, length: v.data.length - 2 });
-}
-
-const idleRef = (v) => Math.min(v.rpm, 1050);
-
-function renderIdlePicker() {
-  const box = $('idlePick');
-  if (!idles) return;
-  box.innerHTML = '';
-  for (const v of idleList()) {
-    const b = document.createElement('button');
-    b.className = 'idleBtn' + (v.id === cfg.idle ? ' on' : '');
-    const tag = v.id.startsWith('own_') ? 'Own' : v.id;
-    b.innerHTML = `<b>${tag}</b><span>${v.name}</span><small>${v.rpm} rpm · ${v.seconds.toFixed(0)} s loop</small>`;
-    b.addEventListener('click', () => selectIdle(v.id));
-    box.appendChild(b);
-  }
-}
-
-async function loadEngine(id, prog = () => {}) {
-  const e = engines.engines.find((x) => x.id === id);
-  if (!e.data) e.data = parseWav(await fetchProgress('audio/' + e.bank + '?v=' + VERSION, prog)).data;
-  return e;
-}
-
-async function selectEngine(id) {
-  cfg.engine = id; saveSettings();
-  renderEnginePicker();
-  const e = await loadEngine(id);
-  if (node) node.port.postMessage({ type: 'bank', sr: engines.sr, loops: e.loops, pulses: e.pulses, data: e.data });
-  $('engineSub').textContent = e.name + ' · EV sound';
-  $('engineCredits').textContent = 'Engine recordings: ' + engines.engines.map((x) => x.credit).join(' · ');
-  // each engine remembers its idle; by default its own idle (Chrysler for the Mustang)
-  await selectIdle(cfg.idleByEngine[id] || (e.idle ? e.idle.id : 'I3'));
-  renderEnginePicker();
-}
-
-function renderEnginePicker() {
-  const box = $('enginePick');
-  if (!engines) return;
-  box.innerHTML = '';
-  for (const e of engines.engines) {
-    const b = document.createElement('button');
-    b.className = 'idleBtn' + (e.id === cfg.engine ? ' on' : '');
-    const top = Math.max(...e.loops.map((l) => l.rpm));
-    b.innerHTML = `<span>${e.name}</span><small>recorded up to ${Math.round(top / 100) * 100} rpm${e.data ? '' : ' · tap to load'}</small>`;
-    b.addEventListener('click', () => selectEngine(e.id));
-    box.appendChild(b);
-  }
-}
-
+// One engine: Mustang GT500 loop bank + Chrysler idle (the pairing chosen in v3).
 async function loadBanks() {
   let got = 0;
-  const total = 3.5e6;
+  const total = 2.9e6;
   const prog = (b) => { got += b; $('startBtn').textContent = `Loading sounds… ${Math.min(99, Math.round(got / total * 100))}%`; };
-  [idles, engines] = await Promise.all([
+  const [bank, idleList] = await Promise.all([
+    fetch('audio/bankA.json?v=' + VERSION).then((r) => r.json()),
     fetch('audio/idles.json?v=' + VERSION).then((r) => r.json()),
-    fetch('audio/engines.json?v=' + VERSION).then((r) => r.json()),
   ]);
-  if (!engines.engines.find((e) => e.id === cfg.engine)) cfg.engine = 'gt500';
-  if (!idleList().find((v) => v.id === cfg.idle)) cfg.idle = curEngine().idle ? curEngine().idle.id : 'I3';
-  await Promise.all([loadEngine(cfg.engine, prog), loadIdle(cfg.idle, prog)]);
-  return true;
+  const idle = idleList.idles.find((v) => v.id === 'I3');
+  const [bw, iw] = await Promise.all([
+    fetchProgress('audio/bankA.wav?v=' + VERSION, prog),
+    fetchProgress('audio/' + idle.file + '?v=' + VERSION, prog),
+  ]);
+  bank.data = parseWav(bw).data;
+  idle.data = parseWav(iw).data;
+  idle.sr = idleList.sr;
+  return { bank, idle };
 }
 
 // ------------------------------------------------------------------ audio
@@ -188,7 +125,9 @@ async function startAudio() {
   const comp = ctx.createDynamicsCompressor();
   comp.threshold.value = -8; comp.knee.value = 6; comp.ratio.value = 6; comp.attack.value = 0.003; comp.release.value = 0.15;
   node.connect(master).connect(comp).connect(ctx.destination);
-  await selectEngine(cfg.engine);
+  const { bank, idle } = banks;
+  node.port.postMessage({ type: 'bank', sr: bank.sr, loops: bank.loops, data: bank.data });
+  node.port.postMessage({ type: 'idle', sr: idle.sr, rpm: idle.rpm, data: idle.data, length: idle.data.length - 2 });
   ctx.onstatechange = () => updateChips();
 }
 
@@ -244,7 +183,7 @@ async function start() {
   requestWakeLock();
   running = true;
   if (cfg.autoRec && !recorder.active) {
-    recorder.start({ engine: cfg.engine, lowSpeed: cfg.lowSpeed, sim: $('simOn').checked, settings: { ...cfg, idleByEngine: undefined } });
+    recorder.start({ engine: 'gt500', lowSpeed: cfg.lowSpeed, pitchMode: cfg.pitchMode, sim: $('simOn').checked, settings: { ...cfg } });
   }
   btn.disabled = false; btn.textContent = 'Stop'; btn.classList.add('stop');
 }
@@ -299,8 +238,8 @@ function sendState(silence, v = 0) {
   const bankMin = cfg.lowSpeed === 'B' ? Math.min(1, Math.max(0, (v - 0.6) / 0.6)) : 0;
   node.port.postMessage({
     type: 'state', bankMin,
-    rpm: drive.rpm, pitch: cfg.pitch,
-    load: drive.load, gain: on ? (0.72 + 0.38 * drive.load) * (engines ? curEngine().gain || 1 : 1) : 0,
+    rpm: drive.rpm, pitch: cfg.pitch, pitchMode: cfg.pitchMode,
+    load: drive.load, gain: on ? 0.72 + 0.38 * drive.load : 0,
   });
 }
 
@@ -384,8 +323,14 @@ function bindCheck(id, onChange) {
 
 function setAB(m) {
   cfg.lowSpeed = m; saveSettings();
-  document.querySelectorAll('.ab button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
+  document.querySelectorAll('#lowAb button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
   $('abInfo').textContent = AB_INFO[m];
+}
+
+function setPitchAB(m) {
+  cfg.pitchMode = m; saveSettings();
+  document.querySelectorAll('#pitchAb button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
+  $('pitchAbInfo').textContent = PITCH_INFO[m];
 }
 
 function showPage(id) {
@@ -399,8 +344,10 @@ function showPage(id) {
 }
 
 function initUI() {
-  document.querySelectorAll('.ab button').forEach((b) => b.addEventListener('click', () => setAB(b.dataset.m)));
+  document.querySelectorAll('#lowAb button').forEach((b) => b.addEventListener('click', () => setAB(b.dataset.m)));
   setAB(cfg.lowSpeed || 'A');
+  document.querySelectorAll('#pitchAb button').forEach((b) => b.addEventListener('click', () => setPitchAB(b.dataset.m)));
+  setPitchAB(cfg.pitchMode || 'A');
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => showPage(b.dataset.p)));
   bindCheck('autoRec');
   document.querySelectorAll('.metricBtn').forEach((b) => b.addEventListener('click', () => drivesView && drivesView.setMetric(b.dataset.m)));
@@ -494,14 +441,12 @@ setInterval(updateChips, 500);
 updateChips();
 loadBanks().then((b) => {
   banks = b;
-  cfg.idleRpm = idleRef(idleList().find((v) => v.id === cfg.idle));
-  renderEnginePicker();
-  renderIdlePicker();
-  $('engineSub').textContent = curEngine().name + ' · EV sound';
-  $('engineCredits').textContent = 'Engine recordings: ' + engines.engines.map((x) => x.credit).join(' · ');
+  cfg.idleRpm = b.idle.rpm;
+  drive.rpm = Math.max(drive.rpm, cfg.idleRpm * 0.95);
+  $('engineSub').textContent = 'Ford Mustang GT500 V8 · EV sound';
   $('startBtn').disabled = false;
   $('startBtn').textContent = 'Start engine';
 }).catch((e) => { $('startBtn').textContent = 'Failed to load sounds'; $('loadInfo').textContent = e.message; });
 
 // test hook for automated checks
-window.__v8 = { cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, get idles() { return idles; }, get engines() { return engines; }, selectIdle, selectEngine, recorder, get drivesView() { return drivesView; }, store, setPedal: (p, r = p > 0 ? 0 : 1) => { simPedal = p; simRegen = r; }, setBrake: (b) => { simBrake = b; } };
+window.__v8 = { cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, recorder, get drivesView() { return drivesView; }, store, setPedal: (p, r = p > 0 ? 0 : 1) => { simPedal = p; simRegen = r; }, setBrake: (b) => { simBrake = b; } };

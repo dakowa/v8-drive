@@ -1,31 +1,35 @@
 // Engine sound renderer (AudioWorklet). Plays real recordings only; no synthesis.
 //
-// One crank phase `phi` (engine cycles of 720 deg) advances at the sound RPM (RPM x pitch),
-// so the loop bank stays phase-locked to it.
+// One crank phase `phi` (engine cycles of 720 deg) advances at the sound RPM, so the loop bank
+// stays phase-locked to it.
 //
 //  Loop bank:  constant-RPM loops cut from the recordings (on-load and off-load layers),
 //              each an integer number of cycles and phase-aligned to one reference cycle.
-//              The two loops bracketing the RPM are read at the shared phase and
+//              The two loops bracketing the sound RPM are read at the shared phase and
 //              crossfaded; load crossfades the on/off layers.
-//  Pulses:     where the nearest loop is more than ~15% away from the target (above or below
-//              what was recorded, or a high pitch setting), the loop isn't sped up. Its firing
-//              pulses are cut out (2 pulses long, Hann) and re-spaced at the target firing
-//              rate, so the exhaust resonances stay where they are, as on a real engine.
 //  Idle:       below ~1.4x idle RPM and with no throttle, a long seamless loop of a real
-//              steady idle plays at the true RPM (pitch doesn't apply), and crossfades into
-//              the loop bank as revs or throttle rise.
+//              steady idle plays, and crossfades into the loop bank as revs or throttle rise.
+//
+// Engine pitch (A/B):
+//  A  as v3: sound RPM = RPM x pitch for everything (idle playback rate, idle/engine
+//     crossfade and loop choice).
+//  B  same as A up to pitch 1.10 and 5000 rpm. Above that no recording is sped up beyond what
+//     sounded natural: the idle stays at its 1.10 pitch and the engine sound rises to the full
+//     pitch as the idle fades out; above 5000 sound RPM (past the top recorded loop, 4400) the
+//     sound keeps rising, but at 40% of the rate.
 
 const TAU_RPM = 0.010;   // s, smoothing of RPM steps arriving at ~60 Hz
 const TAU_LOAD = 0.035;
 const TAU_GAIN = 0.05;
-const RESAMPLE_MAX = 0.15;   // |ln(target/loop rpm)| up to which plain resampling is used
-const PULSE_FULL = 0.25;     // ...and from which only pulse re-spacing is used
+const IDLE_PITCH_MAX = 1.10;   // B
+const TOP_KNEE = 5000, TOP_SLOPE = 0.4;   // B
 
 class EngineSound extends AudioWorkletProcessor {
   constructor() {
     super();
     this.rpmT = 850; this.rpm = 850;
-    this.pitchT = 1; this.pitch = 1;
+    this.pitchT = 1; this.pitch = 1; this.pitchSet = false;
+    this.modeB = false;
     this.loadT = 0; this.load = 0;
     this.gainT = 0; this.gain = 0;
     this.bankMinT = 0; this.bankMin = 0;
@@ -40,7 +44,11 @@ class EngineSound extends AudioWorkletProcessor {
     else if (m.type === 'idle') { this.I = m; this.idlePos = 0; }
     else if (m.type === 'state') {
       this.rpmT = m.rpm; this.loadT = m.load;
-      if (m.pitch !== undefined) this.pitchT = m.pitch;
+      if (m.pitch !== undefined) {
+        this.pitchT = m.pitch;
+        if (!this.pitchSet) { this.pitch = m.pitch; this.pitchSet = true; }
+      }
+      if (m.pitchMode !== undefined) this.modeB = m.pitchMode === 'B';
       if (m.bankMin !== undefined) this.bankMinT = m.bankMin;
       if (m.gain !== undefined) this.gainT = m.gain;
     }
@@ -59,28 +67,35 @@ class EngineSound extends AudioWorkletProcessor {
       this.load += (this.loadT - this.load) * kL;
       this.gain += (this.gainT - this.gain) * kG;
       this.bankMin += (this.bankMinT - this.bankMin) * kG;
-      const rpmS = this.rpm * this.pitch;
-      this.phi += rpmS / (120 * sampleRate);
-      // idle <-> engine crossfade (equal power), judged on the true RPM
+      const p = this.pitch;
+      const pI = this.modeB ? Math.min(p, IDLE_PITCH_MAX) : p;
+      const sIdle = this.rpm * pI;      // sound RPM of the idle, and what the crossfade follows
+      // idle <-> engine crossfade (equal power)
       let mix = 1;
       if (this.I) {
         const ir = this.I.rpm;
-        mix = Math.max(smooth(ir * 1.06, ir * 1.45, this.rpm), smooth(0.16, 0.42, this.load), this.bankMin);
+        mix = Math.max(smooth(ir * 1.06, ir * 1.45, sIdle), smooth(0.16, 0.42, this.load), this.bankMin);
       }
+      let sBank = sIdle;
+      if (this.modeB) {
+        if (p > pI) sBank *= Math.pow(p / pI, mix);
+        if (sBank > TOP_KNEE) sBank = TOP_KNEE + (sBank - TOP_KNEE) * TOP_SLOPE;
+      }
+      this.phi += sBank / (120 * sampleRate);
       let s = 0;
-      if (mix > 0.001 && this.bank) s = Math.sin(mix * Math.PI / 2) * this.sampleBank(rpmS);
-      if (mix < 0.999 && this.I) s += Math.cos(mix * Math.PI / 2) * this.sampleIdle();
+      if (mix > 0.001 && this.bank) s = Math.sin(mix * Math.PI / 2) * this.sampleBank(sBank);
+      if (mix < 0.999 && this.I) s += Math.cos(mix * Math.PI / 2) * this.sampleIdle(sIdle);
       out[i] = s * this.gain;
     }
     return true;
   }
 
   // ---------------------------------------------------------------- idle
-  sampleIdle() {
+  sampleIdle(S) {
     const I = this.I, d = I.data, n = I.length;
     const i = this.idlePos | 0, f = this.idlePos - i;
     const a = d[i], b = d[i + 1 < n ? i + 1 : 0];
-    this.idlePos += (this.rpm / I.rpm) * (I.sr / sampleRate);
+    this.idlePos += (S / I.rpm) * (I.sr / sampleRate);
     if (this.idlePos >= n) this.idlePos -= n;
     return a + (b - a) * f;
   }
@@ -92,7 +107,7 @@ class EngineSound extends AudioWorkletProcessor {
     const gOn = Math.sin(w * Math.PI / 2), gOff = Math.cos(w * Math.PI / 2);
     let s = 0;
     if (gOn > 0.001) s += gOn * this.layer(B.on, R);
-    if (gOff > 0.001) s += gOff * this.layer(B.off.length ? B.off : B.on, R);
+    if (gOff > 0.001) s += gOff * this.layer(B.off, R);
     return s;
   }
 
@@ -106,50 +121,11 @@ class EngineSound extends AudioWorkletProcessor {
       lo = hi - 1;
       x = (R - list[lo].rpm) / (list[hi].rpm - list[lo].rpm);
     }
-    // two loops far apart (a gap in the recording): lean on the nearer one
-    if (hi !== lo && Math.log(list[hi].rpm / list[lo].rpm) > 2 * RESAMPLE_MAX) x = smooth(0.35, 0.65, x);
     const g1 = Math.cos(x * Math.PI / 2), g2 = Math.sin(x * Math.PI / 2);
-    let s = g1 * this.read(list[lo], R);
-    if (hi !== lo && g2 > 0.001) s += g2 * this.read(list[hi], R);
+    const d = this.bank.data;
+    let s = g1 * readLoop(d, list[lo], this.phi);
+    if (hi !== lo) s += g2 * readLoop(d, list[hi], this.phi);
     return s;
-  }
-
-  read(L, R) {
-    const dev = Math.abs(Math.log(R / L.rpm));
-    if (dev <= RESAMPLE_MAX) return readLoop(this.bank.data, L, this.phi);
-    const t = smooth(RESAMPLE_MAX, PULSE_FULL, dev);
-    const p = this.readPulses(L);
-    return t >= 1 ? p : (1 - t) * readLoop(this.bank.data, L, this.phi) + t * p;
-  }
-
-  // Pulse re-spacing (TD-PSOLA on firing pulses): each output firing pulse plays a 2-pulse Hann
-  // grain of the loop at native speed.
-  readPulses(L) {
-    const z = this.bank.pulses, d = this.bank.data;
-    const Lp = L.nc / z;                       // source samples per firing pulse
-    const j = Math.floor(this.phi * z);        // global output pulse index
-    if (L.lastJ !== j) {
-      L.lastJ = j;
-      const n = L.cycles * z;
-      const k = ((j % n) + n) % n;
-      L.grains.push({ c: k * Lp, e: 0 });
-      if (L.grains.length > 8) L.grains.shift();
-    }
-    const step = this.bank.sr / sampleRate;
-    let s = 0, ws = 0;
-    for (let g = L.grains.length - 1; g >= 0; g--) {
-      const G = L.grains[g];
-      if (G.e >= 2 * Lp) { L.grains.splice(g, 1); continue; }
-      const w = 0.5 - 0.5 * Math.cos(Math.PI * G.e / Lp);
-      let p = G.c - Lp + G.e;
-      p = ((p % L.length) + L.length) % L.length;
-      const i = p | 0, f = p - i;
-      const a = d[L.start + i], b = d[L.start + (i + 1 < L.length ? i + 1 : 0)];
-      s += w * (a + (b - a) * f);
-      ws += w;
-      G.e += step;
-    }
-    return ws > 1 ? s / ws : s;
   }
 }
 
@@ -167,9 +143,8 @@ function readLoop(d, L, phi) {
 }
 
 function prepBank(m) {
-  const mk = (layer) => m.loops.filter((l) => l.layer === layer).sort((a, b) => a.rpm - b.rpm)
-    .map((l) => ({ ...l, grains: [], lastJ: -1 }));
-  return { data: m.data, sr: m.sr, pulses: m.pulses || 8, on: mk('ON'), off: mk('OFF') };
+  const mk = (layer) => m.loops.filter((l) => l.layer === layer).sort((a, b) => a.rpm - b.rpm);
+  return { data: m.data, sr: m.sr, on: mk('ON'), off: mk('OFF') };
 }
 
 registerProcessor('v8-engine', EngineSound);
