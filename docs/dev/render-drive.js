@@ -1,6 +1,6 @@
 // Dev tool: renders a scripted drive through the engine offline (for A/B listening and checks).
 // Usage (from the app page console, after the sounds have loaded):
-//   const m = await import('./dev/render-drive.js'); await m.render('A', { ...__v8.banks, pitch: 1.2, pitchMode: 'B' });
+//   const m = await import('./dev/render-drive.js'); await m.render('A', { ...__v8.banks, pitch: 1.2 });
 import { Drivetrain, SimCar, DEFAULTS } from '../vehicle.js';
 
 // [time s, pedal 0..1, brake 0..1]
@@ -15,8 +15,8 @@ function at(script, t) {
   return row;
 }
 
-export async function render(name, { sr = 44100, dur = 43, bank, idle = null, script = SCRIPT, lowSpeed = 'A',
-  pitch = 1, pitchMode = 'A', cfgOver = {}, worklet = '../engine-worklet.js', proc = 'v8-engine', legacy = false,
+export async function render(name, { sr = 44100, dur = 43, bank, idle = null, script = SCRIPT,
+  pitch = 1, cfgOver = {}, worklet = '../engine-worklet.js', proc = 'v8-engine', legacy = false,
   states = null, upload = 'http://127.0.0.1:8766/' } = {}) {
   // states: [{t, v, rpm, load}] from a replayed drive (replay.js) instead of the pedal script
   const ctx = new OfflineAudioContext(1, Math.round(sr * dur), sr);
@@ -25,7 +25,7 @@ export async function render(name, { sr = 44100, dur = 43, bank, idle = null, sc
   node.connect(ctx.destination);
   // legacy: the v3 worklet (message 'bankA', RPM already multiplied by pitch), for comparisons
   node.port.postMessage({ type: legacy ? 'bankA' : 'bank', sr: bank.sr, loops: bank.loops, data: bank.data });
-  const cfg = { ...DEFAULTS, lowSpeed, ...cfgOver };
+  const cfg = { ...DEFAULTS, ...cfgOver };
   if (idle) {
     cfg.idleRpm = idle.rpm;
     node.port.postMessage({ type: 'idle', sr: idle.sr, rpm: idle.rpm, data: idle.data, length: idle.data.length - 2 });
@@ -45,10 +45,9 @@ export async function render(name, { sr = 44100, dur = 43, bank, idle = null, sc
       car.step(pedal, brake, step);
       drive.update(car.v, car.a, step);
     }
-    const bankMin = lowSpeed === 'B' ? Math.min(1, Math.max(0, (car.v - 0.6) / 0.6)) : 0;
     const gain = 0.72 + 0.38 * drive.load;
     const msg = legacy ? { type: 'state', rpm: drive.rpm * pitch, load: drive.load, gain }
-      : { type: 'state', rpm: drive.rpm, pitch, pitchMode, bankMin, load: drive.load, gain };
+      : { type: 'state', rpm: drive.rpm, pitch, load: drive.load, gain };
     trace.push([+t.toFixed(3), +car.v.toFixed(2), +car.a.toFixed(2), Math.round(drive.rpm), drive.gear, +drive.load.toFixed(2)]);
     ctx.suspend(t).then(() => { node.port.postMessage(msg); ctx.resume(); });
   }

@@ -37,8 +37,8 @@ finished real drive goes to the private repo `dakowa/v8-drive-logs` as
 | speed.correctionJumpKmh | p90 above ~2 km/h | GPS corrections are audible as RPM steps; tune Fusion (`correct` gains) |
 | accel.pullPeakG vs thresholds | Bands the driver never or always reaches | Move gSlow/gMed/gFast/gMax so 2k/3k/4k/5k shifts happen as intended |
 | shifts.upRpm, hunting | Reversals within 3 s, upshift RPM far from intended | Drivetrain hysteresis or kickdown logic |
-| rpm.soundRpmAboveTopLoopS | Many seconds past 4400 sound rpm | That is where pitch B's compression matters |
-| lowSpeed | Time and RPM at 5–15 km/h, for the A/B being tested | Compare drives done in A and in B |
+| rpm.soundRpmAboveTopLoopS | Many seconds past 4400 sound rpm | The recordings end there; above pitch 1.10 the sound flattens out |
+| lowSpeed | Time and RPM at 5–15 km/h (`mode` is the A/B of drives before v9) | Compare drives across versions (appVersion) |
 | marks | What happened in the 6 s before each "sounded wrong / great" tap | The best clue; replay and render those moments |
 
 ## The log format (version 3)

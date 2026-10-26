@@ -92,8 +92,8 @@ export async function renderSpan(name, d, t0, t1, { bank, idle, over = {}, ...op
   const cfg = x.cfg;
   const rows = x.rows.filter((r) => r[0] >= t0 && r[0] <= t1);
   // render-drive.js takes a pedal script; here the replayed drivetrain state is fed directly
-  return render(name, { bank, idle, dur: t1 - t0, pitch: cfg.pitch ?? 1, pitchMode: cfg.pitchMode || 'A',
-    lowSpeed: cfg.lowSpeed || 'A', states: rows.map((r) => ({ t: r[0] - t0, v: r[1], rpm: r[4], load: r[6] })), ...opts });
+  return render(name, { bank, idle, dur: t1 - t0, pitch: cfg.pitch ?? 1,
+    states: rows.map((r) => ({ t: r[0] - t0, v: r[1], rpm: r[4], load: r[6] })), ...opts });
 }
 
 // A synthetic real drive in the recorded format (phone motion with noise and a tilted mount,
@@ -144,6 +144,6 @@ export function synth({ script, dur = 120, lag = 0.6, seed = 7, over = {} } = {}
   return { app: 'v8drive', version: 3, appVersion: 'synth', id: 'synth', started: '2026-10-26T12:00:00.000Z', startedMs: Date.parse('2026-10-26T12:00:00Z'),
     columns: ['t', 'v', 'a', 'aRaw', 'rpm', 'gear', 'load', 'aggr', 'aq', 'shift', 'vTrue'],
     gpsColumns: ['t', 'lat', 'lon', 'speed', 'acc', 'heading', 'age'], motionColumns: ['t', 'ax', 'ay', 'az', 'gx', 'gy', 'gz', 'ra', 'rb', 'rg'],
-    engine: 'gt500', lowSpeed: cfg.lowSpeed, pitchMode: 'A', sim: false, settings: cfg, ended: true, synthetic: { lag },
+    engine: 'gt500', sim: false, settings: cfg, ended: true, synthetic: { lag },
     rows, gps, events, motion };
 }

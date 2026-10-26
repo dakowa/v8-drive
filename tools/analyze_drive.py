@@ -15,11 +15,11 @@ DRIVES = os.path.join(ROOT, 'drives')
 REPORTS = os.path.join(DRIVES, 'reports')
 G = 9.81
 DEFAULTS = dict(gSlow=0.10, gMed=0.20, gFast=0.32, gMax=0.45, rpmSlow=2000, rpmMed=3000, rpmFast=4000, rpmMax=5000,
-                downRpm=2500, gpsLatency=0.45, loadFullG=0.22, pitch=1.0, pitchMode='A', lowSpeed='A',
+                downRpm=2500, gpsLatency=0.45, loadFullG=0.22, pitch=1.0,
                 sportMinRpm=0, sportBelowKmh=10)
 ROW_COLS = ['t', 'v', 'a', 'aRaw', 'rpm', 'gear', 'load', 'aggr']        # before v7 logs listed their own
 GPS_COLS = ['t', 'lat', 'lon', 'speed', 'acc', 'heading']
-TOP_LOOP_RPM = 4400   # highest recorded engine loop; above it the sound is a sped-up recording
+TOP_LOOP_RPM = 4400   # highest engine loop; from v9 sound RPM is soft-limited near it above pitch 1.10
 
 
 def load(path):
@@ -171,7 +171,7 @@ def analyze(d):
                   'soundRpmAboveTopLoopS': round(float((snd > TOP_LOOP_RPM).sum() * dtm), 1),
                   'max': int(np.nanmax(rpm)) if len(rpm) else 0}
 
-    # ---- low speed (5-15 km/h): the A/B under test
+    # ---- low speed (5-15 km/h). Up to v8 the app had an A/B here (mode); from v9 one behaviour
     low = (kmh > 5) & (kmh < 15)
     eps = episodes(low, t, 1.0)
     out['lowSpeed'] = {'mode': cfg.get('lowSpeed'), 'timeS': round(float(low.sum() * dtm), 1), 'episodes': len(eps),

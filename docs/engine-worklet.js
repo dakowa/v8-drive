@@ -7,32 +7,32 @@
 //              each an integer number of cycles and phase-aligned to one reference cycle.
 //              The two loops bracketing the sound RPM are read at the shared phase and
 //              crossfaded; load crossfades the on/off layers.
-//  Idle:       below ~1.4x idle RPM and with no throttle, a long seamless loop of a real
-//              steady idle plays, and crossfades into the loop bank as revs or throttle rise.
+//  Idle:       at idle and while crawling, a long seamless loop of a real steady idle plays.
+//              Idle and loop bank switch with hysteresis (on engine RPM and load) and a short
+//              timed crossfade, so the sound is always one or the other, never a lingering blend.
 //
-// Engine pitch (A/B):
-//  A  as v3: sound RPM = RPM x pitch for everything (idle playback rate, idle/engine
-//     crossfade and loop choice).
-//  B  same as A up to pitch 1.10 and 5000 rpm. Above that no recording is sped up beyond what
-//     sounded natural: the idle stays at its 1.10 pitch and the engine sound rises to the full
-//     pitch as the idle fades out; above 5000 sound RPM (past the top recorded loop, 4400) the
-//     sound keeps rising, but at 40% of the rate.
+// Engine pitch: sound RPM = RPM x pitch, with one limit: nothing plays faster than it did at
+// pitch 1.10, the highest that sounded natural. The idle stays at 1.10 x its recorded speed at
+// most, and at the top, where the recordings end (~4300 rpm), higher pitch only rises gently.
 
 const TAU_RPM = 0.010;   // s, smoothing of RPM steps arriving at ~60 Hz
 const TAU_LOAD = 0.035;
 const TAU_GAIN = 0.05;
-const IDLE_PITCH_MAX = 1.10;   // B
-const TOP_KNEE = 5000, TOP_SLOPE = 0.4;   // B
+const PITCH_SAFE = 1.10;
+const TOP_KNEE = 3700, TOP_CEIL = 4300;   // sound RPM where higher pitch starts to flatten out
+// idle -> engine above 1.40 x idle RPM or load 0.30; back below 1.30 x idle RPM and load 0.20
+// (standing and crawling the drivetrain holds the engine at 1.16-1.26 x idle RPM)
+const UP_R = 1.40, UP_LOAD = 0.30, DOWN_R = 1.30, DOWN_LOAD = 0.20;
+const FADE_UP = 0.05, FADE_DOWN = 0.30;   // s (engine in fast so pulling away bites at once)
 
 class EngineSound extends AudioWorkletProcessor {
   constructor() {
     super();
     this.rpmT = 850; this.rpm = 850;
     this.pitchT = 1; this.pitch = 1; this.pitchSet = false;
-    this.modeB = false;
     this.loadT = 0; this.load = 0;
     this.gainT = 0; this.gain = 0;
-    this.bankMinT = 0; this.bankMin = 0;
+    this.toBank = false; this.mix = 0;
     this.phi = 0;
     this.bank = null; this.I = null;
     this.idlePos = 0;
@@ -48,8 +48,6 @@ class EngineSound extends AudioWorkletProcessor {
         this.pitchT = m.pitch;
         if (!this.pitchSet) { this.pitch = m.pitch; this.pitchSet = true; }
       }
-      if (m.pitchMode !== undefined) this.modeB = m.pitchMode === 'B';
-      if (m.bankMin !== undefined) this.bankMinT = m.bankMin;
       if (m.gain !== undefined) this.gainT = m.gain;
     }
   }
@@ -61,30 +59,25 @@ class EngineSound extends AudioWorkletProcessor {
     const kR = 1 - Math.exp(-1 / (sampleRate * TAU_RPM));
     const kL = 1 - Math.exp(-1 / (sampleRate * TAU_LOAD));
     const kG = 1 - Math.exp(-1 / (sampleRate * TAU_GAIN));
+    // idle <-> engine: switched once per block on the smoothed RPM and load
+    if (this.I) {
+      const r = this.rpm / this.I.rpm;
+      if (!this.toBank && (r > UP_R || this.load > UP_LOAD)) this.toBank = true;
+      else if (this.toBank && r < DOWN_R && this.load < DOWN_LOAD) this.toBank = false;
+    } else this.toBank = true;
+    const dMix = this.toBank ? 1 / (FADE_UP * sampleRate) : -1 / (FADE_DOWN * sampleRate);
     for (let i = 0; i < n; i++) {
       this.rpm += (this.rpmT - this.rpm) * kR;
       this.pitch += (this.pitchT - this.pitch) * kL;
       this.load += (this.loadT - this.load) * kL;
       this.gain += (this.gainT - this.gain) * kG;
-      this.bankMin += (this.bankMinT - this.bankMin) * kG;
-      const p = this.pitch;
-      const pI = this.modeB ? Math.min(p, IDLE_PITCH_MAX) : p;
-      const sIdle = this.rpm * pI;      // sound RPM of the idle, and what the crossfade follows
-      // idle <-> engine crossfade (equal power)
-      let mix = 1;
-      if (this.I) {
-        const ir = this.I.rpm;
-        mix = Math.max(smooth(ir * 1.06, ir * 1.45, sIdle), smooth(0.16, 0.42, this.load), this.bankMin);
-      }
-      let sBank = sIdle;
-      if (this.modeB) {
-        if (p > pI) sBank *= Math.pow(p / pI, mix);
-        if (sBank > TOP_KNEE) sBank = TOP_KNEE + (sBank - TOP_KNEE) * TOP_SLOPE;
-      }
+      this.mix = Math.min(1, Math.max(0, this.mix + dMix));
+      const p = this.pitch, mix = this.mix;
+      const sBank = bankRpm(this.rpm, p);
       this.phi += sBank / (120 * sampleRate);
       let s = 0;
       if (mix > 0.001 && this.bank) s = Math.sin(mix * Math.PI / 2) * this.sampleBank(sBank);
-      if (mix < 0.999 && this.I) s += Math.cos(mix * Math.PI / 2) * this.sampleIdle(sIdle);
+      if (mix < 0.999 && this.I) s += Math.cos(mix * Math.PI / 2) * this.sampleIdle(Math.min(this.rpm * p, this.I.rpm * PITCH_SAFE));
       out[i] = s * this.gain;
     }
     return true;
@@ -127,6 +120,15 @@ class EngineSound extends AudioWorkletProcessor {
     if (hi !== lo) s += g2 * readLoop(d, list[hi], this.phi);
     return s;
   }
+}
+
+// Sound RPM of the loop bank. Up to pitch 1.10 it is RPM x pitch. Above that the top is
+// soft-limited to TOP_CEIL (the recordings end there), but never below RPM x 1.10.
+function bankRpm(rpm, p) {
+  const s = rpm * p;
+  if (p <= PITCH_SAFE || s <= TOP_KNEE) return s;
+  const w = TOP_CEIL - TOP_KNEE;
+  return Math.max(rpm * PITCH_SAFE, TOP_KNEE + w * Math.tanh((s - TOP_KNEE) / w));
 }
 
 function smooth(a, b, x) {

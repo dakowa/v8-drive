@@ -8,16 +8,8 @@ const VERSION = '8';   // bump with each release (also in index.html and the imp
 
 // ------------------------------------------------------------------ settings
 const SETTINGS_KEY = 'v8drive.settings';
-const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, pitchMode: 'A', autoRec: true };
+const UI_DEFAULTS = { vol: 1.0, pitch: 1.0, autoRec: true };
 const SETTINGS_VERSION = 5;   // v5: back to one engine (Mustang GT500 + Chrysler idle), pitch A/B
-const AB_INFO = {
-  A: 'A · 5–15 km/h: idle recording + clutch (declutched when coasting, slipping on pull-away)',
-  B: 'B · 5–15 km/h: engine in gear: its driving sound takes over as soon as you roll',
-};
-const PITCH_INFO = {
-  A: 'A: as v3. Everything follows the pitch, the idle too',
-  B: 'B: same as A up to 1.10. Above that, only the driving sound goes higher; above 5000 rpm it rises gently',
-};
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch (e) { return {}; }
 }
@@ -32,7 +24,7 @@ const cfg = { ...DEFAULTS, ...UI_DEFAULTS, ...loadSettings() };
 if ((cfg.version || 0) < 3) cfg.idle = UI_DEFAULTS.idle;
 if ((cfg.version || 0) < 4) delete cfg.downMode;
 if ((cfg.version || 0) < 5) cfg.version = SETTINGS_VERSION;
-for (const k of ['mode', 'engine', 'idle', 'idleByEngine']) delete cfg[k];
+for (const k of ['mode', 'engine', 'idle', 'idleByEngine', 'lowSpeed', 'pitchMode']) delete cfg[k];
 savedCfg = { ...cfg };
 
 // ------------------------------------------------------------------ state
@@ -191,7 +183,7 @@ async function start() {
   requestWakeLock();
   running = true;
   if (cfg.autoRec && !recorder.active) {
-    recorder.start({ engine: 'gt500', lowSpeed: cfg.lowSpeed, pitchMode: cfg.pitchMode, sim: $('simOn').checked, settings: { ...cfg } });
+    recorder.start({ engine: 'gt500', sim: $('simOn').checked, settings: { ...cfg } });
   }
   btn.disabled = false; btn.textContent = 'Stop'; btn.classList.add('stop');
 }
@@ -229,7 +221,7 @@ function tick() {
     v = fusion.v; a = fusion.aLongF; aq = fusion.aLongQ;
   }
   drive.update(v, aq, dt, a);
-  sendState(false, v);
+  sendState(false);
   if ($('simOn').checked !== lastSim) { lastSim = $('simOn').checked; recorder.note(now, 'sim', lastSim ? 1 : 0); }
   if (recorder.active) {
     recorder.row(now, v, a, $('simOn').checked ? a : fusion.aLong, drive, aq);
@@ -242,15 +234,11 @@ function tick() {
   ui.v = v; ui.a = a;
 }
 
-function sendState(silence, v = 0) {
+function sendState(silence) {
   if (!node) return;
   const on = running && !silence;
-  // low-speed B: the engine's in-gear sound takes over from the idle recording once rolling
-  const bankMin = cfg.lowSpeed === 'B' ? Math.min(1, Math.max(0, (v - 0.6) / 0.6)) : 0;
   node.port.postMessage({
-    type: 'state', bankMin,
-    rpm: drive.rpm, pitch: cfg.pitch, pitchMode: cfg.pitchMode,
-    load: drive.load, gain: on ? 0.72 + 0.38 * drive.load : 0,
+    type: 'state', rpm: drive.rpm, pitch: cfg.pitch, load: drive.load, gain: on ? 0.72 + 0.38 * drive.load : 0,
   });
 }
 
@@ -332,18 +320,6 @@ function bindCheck(id, onChange) {
   el.addEventListener('change', () => { cfg[id] = el.checked; saveSettings(); onChange && onChange(); });
 }
 
-function setAB(m) {
-  cfg.lowSpeed = m; saveSettings();
-  document.querySelectorAll('#lowAb button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
-  $('abInfo').textContent = AB_INFO[m];
-}
-
-function setPitchAB(m) {
-  cfg.pitchMode = m; saveSettings();
-  document.querySelectorAll('#pitchAb button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
-  $('pitchAbInfo').textContent = PITCH_INFO[m];
-}
-
 // one tap while driving: what you heard right now, so the analysis can look at that moment
 function mark(what) {
   if (!recorder.active) { $('loadInfo').textContent = 'Start the engine first: marks go into the drive log.'; return; }
@@ -412,10 +388,6 @@ function initVersion() {
 
 function initUI() {
   initVersion();
-  document.querySelectorAll('#lowAb button').forEach((b) => b.addEventListener('click', () => setAB(b.dataset.m)));
-  setAB(cfg.lowSpeed || 'A');
-  document.querySelectorAll('#pitchAb button').forEach((b) => b.addEventListener('click', () => setPitchAB(b.dataset.m)));
-  setPitchAB(cfg.pitchMode || 'A');
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => showPage(b.dataset.p)));
   bindCheck('autoRec');
   document.querySelectorAll('.metricBtn').forEach((b) => b.addEventListener('click', () => drivesView && drivesView.setMetric(b.dataset.m)));

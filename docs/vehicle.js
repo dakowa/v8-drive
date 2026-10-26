@@ -36,9 +36,6 @@ export const DEFAULTS = {
   // Sport mode: keep revs at or above sportMinRpm (0 = off) unless slower than sportBelowKmh.
   sportMinRpm: 0,
   sportBelowKmh: 10,
-  // Low-speed behaviour (A/B test): 'A' clutch (declutch to idle when slow, clutch slip on
-  // pull-away), 'B' in gear (engine stays coupled, rpm follows the wheels to walking pace).
-  lowSpeed: 'A',
   minRpmAfterUpshift: 1150,
   downshiftRpm: 1250,       // coasting downshift; braking raises it up to +600
   loadFullG: 0.22,          // acceleration that counts as full throttle
@@ -52,6 +49,7 @@ export const DEFAULTS = {
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const lerp = (a, b, t) => a + (b - a) * t;
 const smoothstep = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const LAUNCH_MIN = 1500;   // rpm
 const v3 = {
   dot: (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
   sub: (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]],
@@ -238,7 +236,7 @@ export class Drivetrain {
     this.prevDem = 0;
     this.kickT = 0; this.kickDem = 0; this.sinceKick = 10;
     this.shift = null;        // {from,to,t,dur,kind,rpm0}
-    this.clutch = 0;          // 1 = disengaged (standing still)
+    this.crawl = true;        // clutch slipping just above idle (standing, crawling)
     this.prevRpm = this.rpm;
     this.rate = 0;
     this.events = [];
@@ -270,7 +268,8 @@ export class Drivetrain {
     const boost = c.gMax / Math.max(gAvail, 0.05);
     const gA = aShift / G * (aShift > 0 ? boost : 1), gL = aLoad / G * (aLoad > 0 ? boost : 1);
     // throttle estimate: decel -> overrun, ~0 -> cruise part-throttle, accel -> up to full
-    const cruise = v > 2 ? 0.25 : 0.12;
+    // (part throttle rises gradually through 5-16 km/h, so crawling has no step in it)
+    const cruise = 0.12 + 0.13 * smoothstep(1.5, 4.5, v);
     let pedal = smoothstep(-0.035, -0.008, gL) * cruise + smoothstep(0.01, c.loadFullG, gL) * (1 - cruise);
     // aggression envelope: fast attack, slow release
     const target = Math.max(0, gA);
@@ -310,38 +309,36 @@ export class Drivetrain {
       }
       if (u >= 1) { this.gear = s.to; this.shift = null; }
     } else {
-      const wr = this.wheelRpm(v, this.gear);
       let rpmT, slowSmooth = false;
-      if (c.lowSpeed === 'B') {
-        // B, in gear: coupled through to walking pace; a converter-like slip keeps revs up a
-        // little when pulling away, and the engine follows the wheels when coasting.
-        if (v < 1.2 && this.gear > 1) this.gear = 1;
-        const wr1 = this.wheelRpm(v, this.gear);
-        const stall = c.idleRpm + Math.max(pedal, 0.12) * (1100 + 900 * smoothstep(0.1, 0.35, this.aggr));
-        rpmT = Math.max(wr1, stall);
-        if (v < 1.2 && pedal < 0.15) load = Math.min(load, 0.12);
-        slowSmooth = v < 6;
-      } else {
-        // A, clutch: below ~12 km/h off the throttle the clutch is in and the engine idles;
-        // pulling away slips the clutch at a launch speed until the wheels catch up.
-        const launch = c.idleRpm + 250 + pedal * (700 + 900 * smoothstep(0.1, 0.35, this.aggr));
-        const declutch = pedal < 0.15 && (v < 1.2 || (kmh < 12 && this.gear <= 2));
-        if (v < 1.2 && !declutch) {
-          // pulling away from a standstill: bite immediately (as in v3)
-          this.gear = 1;
-          rpmT = Math.max(wr, c.idleRpm + pedal * (1100 + 900 * smoothstep(0.1, 0.35, this.aggr)));
-        } else if (declutch) {
-          if (v < 5.5) this.gear = 1;
-          // standing: same as the idle you approved (revs lift slightly with the throttle estimate)
-          rpmT = c.idleRpm + Math.max(pedal, 0.12) * (1100 + 900 * smoothstep(0.1, 0.35, this.aggr));
-          load = Math.min(load, 0.12);
-        } else if (this.gear === 1 && wr < launch) {
-          rpmT = launch;
-        } else {
-          rpmT = wr;
+      // Crawling (below 13 km/h on a light throttle): the clutch slips with the engine just
+      // above idle, so the real idle recording plays. A firm throttle, or 16 km/h, ends it.
+      // The gap between the thresholds keeps a noisy throttle estimate from flapping it.
+      if (this.crawl) {
+        if (pedal > 0.30 || kmh > 16) {
+          this.crawl = false;
+          if (this.wheelRpm(v, 2) >= c.idleRpm * 1.25) this.gear = 2;
         }
-        slowSmooth = kmh < 20;
+      } else if (pedal < 0.20 && kmh < 13 && this.gear <= 2) {
+        this.crawl = true;
       }
+      const wr = this.wheelRpm(v, this.gear);
+      // pulling away the clutch slips at 1500 rpm or more: the recordings have no clean
+      // on-throttle sound below that (only fast sweeps)
+      const launch = Math.max(LAUNCH_MIN, c.idleRpm + 250 + pedal * (700 + 900 * smoothstep(0.1, 0.35, this.aggr)));
+      if (this.crawl) {
+        this.gear = 1;
+        rpmT = c.idleRpm * (1.16 + 0.1 * smoothstep(0.12, 0.3, pedal));
+        load = Math.min(load, 0.15);
+      } else if (v < 1.2) {
+        // pulling away from a standstill: bite immediately
+        this.gear = 1;
+        rpmT = Math.max(wr, LAUNCH_MIN, c.idleRpm + pedal * (1100 + 900 * smoothstep(0.1, 0.35, this.aggr)));
+      } else if (this.gear === 1 && wr < launch) {
+        rpmT = launch;   // clutch slip until the wheels catch up
+      } else {
+        rpmT = wr;
+      }
+      slowSmooth = kmh < 20;
       // at low speed revs move like a clutch/converter engaging, not instantly with sensor noise
       if (slowSmooth) {
         // rising revs follow quickly (throttle response), falling revs ease down like a clutch
