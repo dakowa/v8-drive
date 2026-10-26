@@ -1,9 +1,10 @@
-import { Fusion, Drivetrain, SimCar, DEFAULTS, TRANSMISSIONS, G } from './vehicle.js?v=6';
-import { Obd, clean } from './obd.js?v=6';
-import { Recorder, DrivesView, store, normalizeImport, exportDrive } from './drives.js?v=6';
+import { Fusion, Drivetrain, SimCar, DEFAULTS, TRANSMISSIONS, G } from './vehicle.js?v=7';
+import { Obd, clean } from './obd.js?v=7';
+import { Recorder, DrivesView, store, normalizeImport, exportDrive } from './drives.js?v=7';
+import { uploadCfg, saveUploadCfg, syncDrives, uploadDrive } from './upload.js?v=7';
 
 const $ = (id) => document.getElementById(id);
-const VERSION = '6';   // bump with each release (also in index.html and the imports above)
+const VERSION = '7';   // bump with each release (also in index.html and the imports above)
 
 // ------------------------------------------------------------------ settings
 const SETTINGS_KEY = 'v8drive.settings';
@@ -20,7 +21,11 @@ const PITCH_INFO = {
 function loadSettings() {
   try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch (e) { return {}; }
 }
+let savedCfg = null;
 function saveSettings() {
+  // changes made mid-drive go into the log, so the analysis knows which settings each part used
+  for (const k in cfg) if (savedCfg && savedCfg[k] !== cfg[k] && k !== 'idleRpm') recorder.note(performance.now() / 1000, 'set', k, cfg[k]);
+  savedCfg = { ...cfg };
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(cfg)); } catch (e) { /* private mode */ }
 }
 const cfg = { ...DEFAULTS, ...UI_DEFAULTS, ...loadSettings() };
@@ -28,6 +33,7 @@ if ((cfg.version || 0) < 3) cfg.idle = UI_DEFAULTS.idle;
 if ((cfg.version || 0) < 4) delete cfg.downMode;
 if ((cfg.version || 0) < 5) cfg.version = SETTINGS_VERSION;
 for (const k of ['mode', 'engine', 'idle', 'idleByEngine']) delete cfg[k];
+savedCfg = { ...cfg };
 
 // ------------------------------------------------------------------ state
 const fusion = new Fusion(cfg);
@@ -43,6 +49,7 @@ let running = false;
 let tickTimer = null, lastTick = 0;
 let motionCount = 0, motionRate = 0, motionT0 = 0, lastMotion = 0;
 let gpsInfo = null, gpsWatch = null;
+let lastSim = null;
 let wakeLock = null;
 let obd = null;
 
@@ -138,6 +145,7 @@ function onMotion(e) {
   const a = acc && acc.x != null ? [acc.x, acc.y, acc.z] : null;
   const g = ag && ag.x != null ? [ag.x, ag.y, ag.z] : null;
   fusion.motion(t, a, g, e.rotationRate);
+  recorder.motion(t, a, g, e.rotationRate);
   motionCount++; lastMotion = t;
   if (t - motionT0 > 1) { motionRate = motionCount / (t - motionT0); motionCount = 0; motionT0 = t; }
 }
@@ -150,7 +158,7 @@ function startGps() {
     const c = pos.coords;
     gpsInfo = { t: now, acc: c.accuracy, speed: c.speed };
     fusion.gps(tFix, c.speed, c.accuracy);
-    recorder.gps(now, c);
+    recorder.gps(now, c, now - tFix);
   }, (err) => { gpsInfo = { err: err.message }; updateChips(); },
   { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
 }
@@ -190,7 +198,7 @@ async function start() {
 
 function stop() {
   running = false;
-  recorder.stop().then(() => drivesView && drivesView.refresh());
+  recorder.stop().then(() => sync()).then(() => drivesView && drivesView.refresh());
   sendState(true);
   const btn = $('startBtn');
   btn.textContent = 'Start engine'; btn.classList.remove('stop');
@@ -199,7 +207,9 @@ function stop() {
 
 window.addEventListener('pagehide', () => { recorder.flush(); });
 document.addEventListener('visibilitychange', () => {
+  recorder.note(performance.now() / 1000, document.visibilityState);
   if (document.visibilityState === 'hidden') recorder.flush();   // iOS may suspend the page any moment
+  if (document.visibilityState === 'visible' && !running) sync();
   if (document.visibilityState === 'visible' && running) {
     if (ctx && ctx.state !== 'running') ctx.resume();
     requestWakeLock();
@@ -220,8 +230,9 @@ function tick() {
   }
   drive.update(v, aq, dt, a);
   sendState(false, v);
+  if ($('simOn').checked !== lastSim) { lastSim = $('simOn').checked; recorder.note(now, 'sim', lastSim ? 1 : 0); }
   if (recorder.active) {
-    recorder.row(now, v, a, $('simOn').checked ? a : fusion.aLong, drive);
+    recorder.row(now, v, a, $('simOn').checked ? a : fusion.aLong, drive, aq);
     if (drive.events.length !== lastEventN || drive.events[drive.events.length - 1] !== recorder.lastEv) {
       const e = drive.events[drive.events.length - 1];
       if (e && e !== recorder.lastEv) { recorder.event(now, e); recorder.lastEv = e; }
@@ -333,11 +344,56 @@ function setPitchAB(m) {
   $('pitchAbInfo').textContent = PITCH_INFO[m];
 }
 
+// one tap while driving: what you heard right now, so the analysis can look at that moment
+function mark(what) {
+  if (!recorder.active) { $('loadInfo').textContent = 'Start the engine first: marks go into the drive log.'; return; }
+  const now = performance.now() / 1000;
+  recorder.note(now, 'mark', what, Math.round(drive.rpm), drive.gear, +(ui.v * 3.6).toFixed(1));
+  const t = Math.round(now - recorder.t0);
+  $('markInfo').textContent = `Marked "${what}" at ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')} · ${Math.round(ui.v * 3.6)} km/h, gear ${drive.gear}, ${Math.round(drive.rpm)} rpm`;
+  const b = $(what === 'wrong' ? 'markBad' : 'markGood');
+  b.classList.add('flash'); setTimeout(() => b.classList.remove('flash'), 600);
+}
+
+function sync() {
+  return syncDrives(VERSION, recorder.active ? recorder.id : null)
+    .then((s) => { $('upStatus').textContent = s; drivesView && drivesView.refresh(); })
+    .catch((e) => { $('upStatus').textContent = 'Upload failed: ' + e.message; });
+}
+
+function initUpload() {
+  const c = uploadCfg();
+  $('upOn').checked = c.on; $('upRepo').value = c.repo; $('upToken').value = c.token;
+  const save = () => saveUploadCfg({ on: $('upOn').checked, repo: $('upRepo').value.trim(), token: $('upToken').value.trim() });
+  $('upOn').addEventListener('change', () => { save(); sync(); });
+  $('upRepo').addEventListener('change', save);
+  $('upToken').addEventListener('change', save);
+  $('upNow').addEventListener('click', () => { save(); $('upStatus').textContent = 'Uploading…'; sync(); });
+  $('driveUpload').addEventListener('click', async () => {
+    if (!drivesView || !drivesView.drive) return;
+    $('driveUpInfo').textContent = 'Uploading…';
+    try {
+      const r = await uploadDrive(drivesView.drive.id, VERSION);
+      $('driveUpInfo').textContent = `Uploaded ${r.name} (${(r.bytes / 1e6).toFixed(1)} MB)`;
+      drivesView.drive.uploaded = r.name;
+      drivesView.refresh();
+    } catch (e) { $('driveUpInfo').textContent = e.message; }
+  });
+  // share sheet (AirDrop, Mail, Files...): the file is built when the drive opens, because
+  // Safari only allows sharing straight from the tap
+  $('driveShare').addEventListener('click', () => {
+    const f = drivesView && drivesView.shareFile;
+    if (!f) { $('driveUpInfo').textContent = 'Preparing the file, tap again in a second'; return; }
+    if (navigator.canShare && navigator.canShare({ files: [f] })) navigator.share({ files: [f], title: f.name }).catch(() => {});
+    else exportDrive(drivesView.drive, VERSION);
+  });
+}
+
 function showPage(id) {
   document.querySelectorAll('.page').forEach((p) => p.classList.toggle('hidden', p.id !== id));
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.p === id));
   if (id === 'drivesPage') {
-    if (!drivesView) drivesView = new DrivesView($('drivesPage'), () => cfg);
+    if (!drivesView) drivesView = new DrivesView($('drivesPage'), () => cfg, VERSION);
     drivesView.refresh();
     if (drivesView.drive) drivesView.renderMap().then(() => drivesView.map && drivesView.map.invalidateSize());
   }
@@ -351,14 +407,17 @@ function initUI() {
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => showPage(b.dataset.p)));
   bindCheck('autoRec');
   document.querySelectorAll('.metricBtn').forEach((b) => b.addEventListener('click', () => drivesView && drivesView.setMetric(b.dataset.m)));
-  $('driveExport').addEventListener('click', () => drivesView && drivesView.drive && exportDrive(drivesView.drive));
+  $('driveExport').addEventListener('click', () => drivesView && drivesView.drive && exportDrive(drivesView.drive, VERSION));
+  $('markBad').addEventListener('click', () => mark('wrong'));
+  $('markGood').addEventListener('click', () => mark('great'));
+  initUpload();
   $('driveDelete').addEventListener('click', () => { if (drivesView && drivesView.drive && confirm('Delete this drive?')) drivesView.remove(); });
   $('importFile').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
     try {
       const d = normalizeImport(JSON.parse(await f.text()));
       const id = await store.importDrive(d);
-      if (!drivesView) drivesView = new DrivesView($('drivesPage'), () => cfg);
+      if (!drivesView) drivesView = new DrivesView($('drivesPage'), () => cfg, VERSION);
       await drivesView.open(id);
     } catch (err) { alert('Import failed: ' + err.message); }
     e.target.value = '';
@@ -417,7 +476,7 @@ function initUI() {
   $('obdConnect').addEventListener('click', async () => {
     try {
       obd = new Obd(olog);
-      obd.onSpeed = (v, t) => fusion.obd(t, v);
+      obd.onSpeed = (v, t) => { fusion.obd(t, v); recorder.note(t, 'obd', +v.toFixed(2)); };
       await obd.connect($('obdInit').value.split(';').map((s) => s.trim()).filter(Boolean));
       $('obdInfo').textContent = 'Connected · polling speed (010D)';
       obd.poll();
@@ -447,6 +506,7 @@ loadBanks().then((b) => {
   $('startBtn').disabled = false;
   $('startBtn').textContent = 'Start engine';
 }).catch((e) => { $('startBtn').textContent = 'Failed to load sounds'; $('loadInfo').textContent = e.message; });
+sync();   // finish and upload drives from earlier sessions
 
 // test hook for automated checks
-window.__v8 = { cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, recorder, get drivesView() { return drivesView; }, store, setPedal: (p, r = p > 0 ? 0 : 1) => { simPedal = p; simRegen = r; }, setBrake: (b) => { simBrake = b; } };
+window.__v8 = { sync, mark, cfg, fusion, drive, sim, get node() { return node; }, get ctx() { return ctx; }, get banks() { return banks; }, recorder, get drivesView() { return drivesView; }, store, setPedal: (p, r = p > 0 ? 0 : 1) => { simPedal = p; simRegen = r; }, setBrake: (b) => { simBrake = b; } };

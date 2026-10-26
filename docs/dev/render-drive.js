@@ -17,7 +17,8 @@ function at(script, t) {
 
 export async function render(name, { sr = 44100, dur = 43, bank, idle = null, script = SCRIPT, lowSpeed = 'A',
   pitch = 1, pitchMode = 'A', cfgOver = {}, worklet = '../engine-worklet.js', proc = 'v8-engine', legacy = false,
-  upload = 'http://127.0.0.1:8766/' } = {}) {
+  states = null, upload = 'http://127.0.0.1:8766/' } = {}) {
+  // states: [{t, v, rpm, load}] from a replayed drive (replay.js) instead of the pedal script
   const ctx = new OfflineAudioContext(1, Math.round(sr * dur), sr);
   await ctx.audioWorklet.addModule(new URL(worklet, import.meta.url));
   const node = new AudioWorkletNode(ctx, proc, { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1] });
@@ -33,10 +34,17 @@ export async function render(name, { sr = 44100, dur = 43, bank, idle = null, sc
   const car = new SimCar();
   const step = 1 / 60;
   const trace = [];
+  let si = 0;
   for (let t = 0; t < dur - step; t += step) {
-    const [, pedal, brake] = at(script, t);
-    car.step(pedal, brake, step);
-    drive.update(car.v, car.a, step);
+    if (states) {
+      while (si < states.length - 1 && states[si + 1].t <= t) si++;
+      const s = states[si];
+      car.v = s.v; car.a = 0; drive.rpm = s.rpm; drive.load = s.load;
+    } else {
+      const [, pedal, brake] = at(script, t);
+      car.step(pedal, brake, step);
+      drive.update(car.v, car.a, step);
+    }
     const bankMin = lowSpeed === 'B' ? Math.min(1, Math.max(0, (car.v - 0.6) / 0.6)) : 0;
     const gain = 0.72 + 0.38 * drive.load;
     const msg = legacy ? { type: 'state', rpm: drive.rpm * pitch, load: drive.load, gain }

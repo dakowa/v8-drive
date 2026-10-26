@@ -12,7 +12,10 @@ Engine pitch has an A/B test. A (as v3): sound RPM = RPM × pitch for everything
 Extra engines (BMW M5 V10, Ferrari 458, Mercedes-AMG, Camaro) were tried in v4 from Wikimedia Commons recordings and removed in v5: they sounded bad and their separate idle recordings clashed. A granular-replay engine (B) was tried in v1–v2 and dropped as too metallic.
 
 ## Drives
-Drives record automatically while the engine runs (IndexedDB on the phone, 25 Hz engine/motion rows plus 1 Hz GPS fixes with position). The Drives tab plots the route on OpenStreetMap (Leaflet), coloured by acceleration band, speed, RPM, gear or throttle, with linked speed/accel/RPM charts, best 0–50/0–100 and time spent in each shift band. JSON export/import.
+Drives record automatically while the engine runs (IndexedDB on the phone). Each log holds ~20 Hz engine rows, the raw phone motion (~60 Hz), 1 Hz GPS fixes with position and fix age, gear changes, mid-drive setting changes, and the driver's **Sounded wrong / Sounded great** marks (big buttons under Start). The Drives tab plots the route on OpenStreetMap (Leaflet), coloured by acceleration band, speed, RPM, gear or throttle, with linked speed/accel/RPM charts, best 0–50/0–100 and time spent in each shift band. Marks show on the map. Send (share sheet), upload, JSON export/import.
+
+## Feedback loop
+With *Send drives for analysis* on, every finished real drive (GPS speed above 15 km/h, so never the simulator) is gzipped and uploaded to a private GitHub repo with a fine-grained token kept only on the phone. Drives the app never got to stop (phone locked) are closed and uploaded the next time it opens. On the computer, `tools/pull_drives.py` fetches them, `tools/analyze_drive.py` writes a report per drive, and `docs/dev/replay.js` re-runs a drive through the real Fusion + Drivetrain with different settings and renders any moment to audio. See [ANALYSIS.md](ANALYSIS.md). Python tools need `pip install -r tools/requirements.txt`.
 
 ## Vehicle model (`docs/vehicle.js`)
 - Fusion: iOS linear acceleration projected on the learned forward axis (preset → learned on first pull-away → refined from GPS acceleration), integrated for instant speed, corrected by latency-compensated GPS speed (or OBD2 010D), zero-velocity updates at standstill.

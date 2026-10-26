@@ -1,10 +1,20 @@
-// Drive recording (IndexedDB on the phone), and the Drives tab: map + charts + stats.
-// Map: Leaflet with OpenStreetMap tiles (darkened with a CSS filter); no API key, nothing
-// leaves the phone except the map-tile requests for the area being viewed.
+// Drive recording (IndexedDB on the phone), upload for analysis, and the Drives tab:
+// map + charts + stats.
+// Map: Leaflet with OpenStreetMap tiles (darkened with a CSS filter); no API key.
+// Drives leave the phone only if the user turns on upload (to their own private GitHub repo)
+// or sends one from the Drives tab.
 
 const DB = 'v8drive', VER = 1;
-const ROW_COLS = ['t', 'v', 'a', 'aRaw', 'rpm', 'gear', 'load', 'aggr'];
-const GPS_COLS = ['t', 'lat', 'lon', 'speed', 'acc', 'heading'];
+// rows (25 Hz): fused speed, aLongF (a), raw aLong, rpm, gear, load, aggression, aLongQ (aq:
+// what the drivetrain's load used), shift (1 while a gear change is in progress)
+const ROW_COLS = ['t', 'v', 'a', 'aRaw', 'rpm', 'gear', 'load', 'aggr', 'aq', 'shift'];
+// gps: age = how old the fix was when it arrived (s)
+const GPS_COLS = ['t', 'lat', 'lon', 'speed', 'acc', 'heading', 'age'];
+// motion (every devicemotion event): linear accel, accel incl. gravity, rotation rate (deg/s)
+const MOTION_COLS = ['t', 'ax', 'ay', 'az', 'gx', 'gy', 'gz', 'ra', 'rb', 'rg'];
+// events: [t, kind, ...]: up/down/kickdown (from, to, rpm), mark (what), set (key, value),
+// sim (on), obd (speed m/s), hidden/visible (page backgrounded), stop
+export const LOG_VERSION = 3;
 
 function idb() {
   return new Promise((res, rej) => {
@@ -38,9 +48,20 @@ export const store = {
     const meta = await tx(db, ['drives'], 'readonly', (t) => t.objectStore('drives').get(id));
     const chunks = await tx(db, ['chunks'], 'readonly',
       (t) => t.objectStore('chunks').getAll(IDBKeyRange.bound([id, 0], [id, Infinity])));
-    const d = { ...meta, rows: [], gps: [], events: [] };
+    const d = { ...meta, rows: [], gps: [], events: [], motion: [] };
     for (const c of (chunks || []).sort((a, b) => a.seq - b.seq)) {
-      d.rows.push(...c.rows); d.gps.push(...c.gps); d.events.push(...c.events);
+      for (const r of c.rows) d.rows.push(r);
+      for (const g of c.gps) d.gps.push(g);
+      for (const e of c.events) d.events.push(e);
+      if (c.motion && !(c.motion instanceof Float32Array)) for (const m of c.motion) d.motion.push(m);
+      else if (c.motion) {
+        const m = c.motion, n = MOTION_COLS.length;
+        for (let i = 0; i + n <= m.length; i += n) {
+          const r = [+m[i].toFixed(3)];
+          for (let k = 1; k < n; k++) r.push(+m[i + k].toFixed(k < 7 ? 3 : 1));
+          d.motion.push(r);
+        }
+      }
     }
     return d;
   },
@@ -55,7 +76,7 @@ export const store = {
     const id = d.id || ('imp-' + Date.now());
     const meta = summarize({ ...d, id });
     await this.putMeta(meta);
-    await this.putChunk({ id, seq: 0, rows: d.rows || [], gps: d.gps || [], events: d.events || [] });
+    await this.putChunk({ id, seq: 0, rows: d.rows || [], gps: d.gps || [], events: d.events || [], motion: d.motion || [] });
     return id;
   },
 };
@@ -70,34 +91,43 @@ export class Recorder {
     this.id = 'd' + now;
     this.t0 = performance.now() / 1000;
     this.seq = 0;
-    this.buf = { rows: [], gps: [], events: [] };
+    this.buf = { rows: [], gps: [], events: [], motion: [] };
     this.meta = { id: this.id, startedMs: now, started: new Date(now).toISOString(), columns: ROW_COLS,
-      gpsColumns: GPS_COLS, ...info, rowsN: 0, gpsN: 0, durationS: 0, distanceM: 0, maxKmh: 0, maxG: 0, minG: 0 };
+      gpsColumns: GPS_COLS, motionColumns: MOTION_COLS, device: navigator.userAgent, ...info,
+      rowsN: 0, gpsN: 0, gpsMaxKmh: 0, marks: 0, durationS: 0, distanceM: 0, maxKmh: 0, maxG: 0, minG: 0, ended: false };
     this.lastFix = null;
     this.lastRow = 0;
     this.active = true;
     this.timer = setInterval(() => this.flush(), 15000);
   }
 
-  row(now, v, a, aRaw, drive) {
+  row(now, v, a, aRaw, drive, aq = 0) {
     if (!this.active || now - this.lastRow < 0.04) return;
     this.lastRow = now;
     const t = +(now - this.t0).toFixed(3);
     this.buf.rows.push([t, +v.toFixed(2), +a.toFixed(3), +aRaw.toFixed(3), Math.round(drive.rpm), drive.gear,
-      +drive.load.toFixed(2), +drive.aggr.toFixed(3)]);
+      +drive.load.toFixed(2), +drive.aggr.toFixed(3), +aq.toFixed(3), drive.shift ? 1 : 0]);
     const m = this.meta;
     m.rowsN++; m.durationS = t;
     m.maxKmh = Math.max(m.maxKmh, v * 3.6);
     m.maxG = Math.max(m.maxG, a / 9.81); m.minG = Math.min(m.minG, a / 9.81);
   }
 
-  gps(now, c) {
+  motion(now, a, g, rr) {
+    if (!this.active) return;
+    const z = (p, k) => (p && p[k] != null ? p[k] : NaN);
+    this.buf.motion.push(now - this.t0, z(a, 0), z(a, 1), z(a, 2), z(g, 0), z(g, 1), z(g, 2),
+      rr ? rr.alpha ?? NaN : NaN, rr ? rr.beta ?? NaN : NaN, rr ? rr.gamma ?? NaN : NaN);
+  }
+
+  gps(now, c, age = 0) {
     if (!this.active) return;
     const t = +(now - this.t0).toFixed(3);
     this.buf.gps.push([t, +c.latitude.toFixed(6), +c.longitude.toFixed(6), c.speed == null ? null : +c.speed.toFixed(2),
-      Math.round(c.accuracy), c.heading == null ? null : Math.round(c.heading)]);
+      Math.round(c.accuracy), c.heading == null ? null : Math.round(c.heading), +age.toFixed(2)]);
     if (this.lastFix && c.accuracy < 40) this.meta.distanceM += haversine(this.lastFix, [c.latitude, c.longitude]);
     if (c.accuracy < 40) this.lastFix = [c.latitude, c.longitude];
+    if (c.speed != null && c.accuracy < 40) this.meta.gpsMaxKmh = Math.max(this.meta.gpsMaxKmh, c.speed * 3.6);
     this.meta.gpsN++;
   }
 
@@ -106,22 +136,34 @@ export class Recorder {
     this.buf.events.push([+(now - this.t0).toFixed(3), e.kind, e.from, e.to, e.rpm]);
   }
 
+  // anything else worth knowing when analysing: marks, setting changes, page hidden/visible
+  note(now, kind, ...args) {
+    if (!this.active) return;
+    this.buf.events.push([+(now - this.t0).toFixed(3), kind, ...args]);
+    if (kind === 'mark') this.meta.marks++;
+    if (kind === 'sim' && args[0]) this.meta.simUsed = true;
+  }
+
   async flush() {
-    if (!this.buf || (!this.buf.rows.length && !this.buf.gps.length)) return;
-    const c = { id: this.id, seq: this.seq++, ...this.buf };
-    this.buf = { rows: [], gps: [], events: [] };
+    if (!this.buf || (!this.buf.rows.length && !this.buf.gps.length && !this.buf.events.length)) return;
+    const c = { id: this.id, seq: this.seq++, ...this.buf, motion: new Float32Array(this.buf.motion) };
+    this.buf = { rows: [], gps: [], events: [], motion: [] };
     try {
       await store.putChunk(c);
+      this.meta.updatedMs = Date.now();
       await store.putMeta({ ...this.meta, distanceM: Math.round(this.meta.distanceM) });
     } catch (e) { console.warn('drive save failed', e); }
   }
 
   async stop() {
     if (!this.active) return;
+    this.note(performance.now() / 1000, 'stop');
     this.active = false;
+    this.meta.ended = true;
     clearInterval(this.timer);
     await this.flush();
-    if (this.meta.rowsN < 50) await store.remove(this.id);    // ignore accidental starts
+    if (this.meta.rowsN < 50) { await store.remove(this.id); return null; }    // ignore accidental starts
+    return this.id;
   }
 }
 
@@ -134,35 +176,43 @@ function haversine(a, b) {
 
 function summarize(d) {
   const rows = d.rows || [], gps = d.gps || [];
-  let maxKmh = 0, maxG = 0, minG = 0, dist = 0, last = null;
+  let maxKmh = 0, maxG = 0, minG = 0, dist = 0, last = null, gpsMaxKmh = 0;
   for (const r of rows) { maxKmh = Math.max(maxKmh, r[1] * 3.6); maxG = Math.max(maxG, r[2] / 9.81); minG = Math.min(minG, r[2] / 9.81); }
   for (const g of gps) {
+    if (g[3] != null && g[4] < 40) gpsMaxKmh = Math.max(gpsMaxKmh, g[3] * 3.6);
     if (g[1] == null || g[4] > 40) continue;
     if (last) dist += haversine(last, [g[1], g[2]]);
     last = [g[1], g[2]];
   }
   const startedMs = d.startedMs || Date.parse(d.started) || Date.now();
-  return { id: d.id, startedMs, started: new Date(startedMs).toISOString(), engine: d.engine, lowSpeed: d.lowSpeed,
-    sim: d.sim, settings: d.settings, columns: ROW_COLS, gpsColumns: GPS_COLS, rowsN: rows.length, gpsN: gps.length,
-    durationS: rows.length ? rows[rows.length - 1][0] : 0, distanceM: Math.round(dist), maxKmh, maxG, minG };
+  const { rows: _r, gps: _g, events: _e, motion: _m, app: _a, ...rest } = d;
+  return { ...rest, id: d.id, startedMs, started: new Date(startedMs).toISOString(), columns: d.columns || ROW_COLS,
+    gpsColumns: d.gpsColumns || GPS_COLS, rowsN: rows.length, gpsN: gps.length,
+    marks: (d.events || []).filter((e) => e[1] === 'mark').length, ended: true,
+    durationS: rows.length ? rows[rows.length - 1][0] : 0, distanceM: Math.round(dist), maxKmh, maxG, minG, gpsMaxKmh };
 }
 
-// v1 exports (before GPS positions were recorded) -> v2 shape
+// older exports -> current shape (v2 and later carry their own column lists)
 export function normalizeImport(j) {
   if (j.app !== 'v8drive') throw new Error('Not a V8 Drive log');
-  if (j.version === 2) return j;
+  if (j.version >= 2) return j;
   const rows = (j.rows || []).map((r) => [r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]]);
   const gps = (j.gps || []).map((g) => [g[0], null, null, g[1], g[2], g[3]]);
   return { app: 'v8drive', version: 2, started: j.started, settings: j.settings, rows, gps, events: [] };
 }
 
-export function exportDrive(d) {
-  const payload = { app: 'v8drive', version: 2, ...d };
-  const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+// The analysis file: everything recorded, plus the app version and the settings in force.
+export function driveJson(d, appVersion) {
+  return JSON.stringify({ app: 'v8drive', version: LOG_VERSION, appVersion, ...d });
+}
+export const driveFileName = (d) => `v8drive-${d.started.slice(0, 16).replace(/[-:T]/g, '')}.json`;
+
+export function exportDrive(d, appVersion) {
+  const blob = new Blob([driveJson(d, appVersion)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `v8drive-${d.started.slice(0, 16).replace(/[-:T]/g, '')}.json`;
+  a.download = driveFileName(d);
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
@@ -176,8 +226,13 @@ function loadLeaflet() {
     const css = document.createElement('link');
     css.rel = 'stylesheet';
     css.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
+    css.integrity = 'sha512-h9FcoyWjHcOcmEVkxOfTLnmZFWIH0iZhZT1H2TbOq55xssQGEJHEaIm+PgoUaZbRvQTNTluNOEfb1ZRy6D3BOw==';
+    css.crossOrigin = 'anonymous';
     document.head.appendChild(css);
     const s = document.createElement('script');
+    // pinned by hash: this page may hold the upload token, so only this exact file may run
+    s.integrity = 'sha512-puJW3E/qXDqYp9IfhAI54BJEaWIfloJ7JWs7OeD5i6ruC9JZL1gERT1wjtwXFlh7CjE7ZJ+/vcRZRkIYIb6p4g==';
+    s.crossOrigin = 'anonymous';
     s.src = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js';
     s.onload = () => res(window.L);
     s.onerror = () => rej(new Error('Map library failed to load'));
@@ -210,8 +265,8 @@ function lerpColor(stops, x) {
 }
 
 export class DrivesView {
-  constructor(el, getCfg) {
-    this.el = el; this.getCfg = getCfg;
+  constructor(el, getCfg, appVersion) {
+    this.el = el; this.getCfg = getCfg; this.appVersion = appVersion;
     this.metric = 'accel';
     this.drive = null;
     this.map = null;
@@ -226,7 +281,7 @@ export class DrivesView {
       b.className = 'driveItem' + (this.drive && this.drive.id === m.id ? ' on' : '');
       const d = new Date(m.startedMs);
       b.innerHTML = `<b>${d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })} ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</b>
-        <span>${fmtDur(m.durationS)} · ${(m.distanceM / 1000).toFixed(1)} km · max ${Math.round(m.maxKmh)} km/h · ${m.maxG.toFixed(2)} g${m.sim ? ' · simulator' : ''}</span>`;
+        <span>${fmtDur(m.durationS)} · ${(m.distanceM / 1000).toFixed(1)} km · max ${Math.round(m.maxKmh)} km/h · ${m.maxG.toFixed(2)} g${m.sim ? ' · simulator' : ''}${m.marks ? ` · ${m.marks} marks` : ''}${m.uploaded ? ' · uploaded ✓' : ''}${m.ended === false ? ' · recording' : ''}</span>`;
       b.addEventListener('click', () => this.open(m.id));
       box.appendChild(b);
     }
@@ -234,6 +289,12 @@ export class DrivesView {
 
   async open(id) {
     this.drive = await store.load(id);
+    this.shareFile = null;
+    this.el.querySelector('#driveUpInfo').textContent = this.drive.uploaded ? `Uploaded as ${this.drive.uploaded}` : '';
+    const d = this.drive;
+    import('./upload.js?v=7').then((u) => u.gzip(driveJson(d, this.appVersion)))
+      .then((gz) => { if (this.drive === d) this.shareFile = new File([gz], driveFileName(d) + '.gz', { type: 'application/gzip' }); })
+      .catch(() => {});
     this.el.querySelector('#driveDetail').classList.remove('hidden');
     await this.refresh();
     this.renderStats();
@@ -330,10 +391,12 @@ export class DrivesView {
     }
     const ev = this.drive.events || [];
     for (const e of ev) {
-      if (e[1] !== 'kickdown') continue;
-      const f = this.fixAt(e[0]);
-      if (f) L.circleMarker([f[1], f[2]], { radius: 5, color: '#fff', weight: 2, fillColor: '#ff2d55', fillOpacity: 1 })
+      const f = (e[1] === 'kickdown' || e[1] === 'mark') && this.fixAt(e[0]);
+      if (!f) continue;
+      if (e[1] === 'kickdown') L.circleMarker([f[1], f[2]], { radius: 5, color: '#fff', weight: 2, fillColor: '#ff2d55', fillOpacity: 1 })
         .bindTooltip(`Kickdown ${e[2]}→${e[3]}`).addTo(this.map);
+      else L.circleMarker([f[1], f[2]], { radius: 7, color: '#fff', weight: 2, fillColor: e[2] === 'wrong' ? '#b36bff' : '#3ecf8e', fillOpacity: 1 })
+        .bindTooltip(`Marked: sounded ${e[2]}`).addTo(this.map).on('click', () => this.setCursor(e[0]));
     }
     L.circleMarker(latlngs[0], { radius: 6, color: '#3ecf8e', fillOpacity: 1 }).bindTooltip('Start').addTo(this.map);
     L.circleMarker(latlngs[latlngs.length - 1], { radius: 6, color: '#ff3d1f', fillOpacity: 1 }).bindTooltip('End').addTo(this.map);

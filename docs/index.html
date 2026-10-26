@@ -51,7 +51,7 @@ summary::-webkit-details-marker { display: none; }
 .row small { color: var(--dim); display: block; font-size: 12px; }
 .row output { color: var(--dim); font-variant-numeric: tabular-nums; min-width: 54px; text-align: right; font-size: 13px; }
 input[type=range] { width: 46%; accent-color: var(--accent); }
-select, input[type=text] { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 14px; max-width: 60%; }
+select, input[type=text], input[type=password] { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 14px; max-width: 60%; }
 .btn { appearance: none; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 9px 14px; font-size: 14px; font-weight: 600; }
 .btn.primary { background: var(--accent); color: #1a0700; border-color: transparent; }
 .sim { display: grid; grid-template-columns: 1fr 96px; gap: 10px; margin-top: 4px; }
@@ -110,6 +110,12 @@ a { color: var(--accent2); }
 .bands { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--panel2); }
 .bandLbl { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--dim); font-size: 11.5px; margin-top: 6px; }
 .rowBtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.marks { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.marks button { appearance: none; height: 64px; border-radius: 16px; font: inherit; font-size: 17px; font-weight: 700; color: var(--text); background: #2a1d3a; border: 1px solid #5b3d80; }
+.marks button#markGood { background: #15302a; border-color: #2f6b55; }
+.marks button.flash { filter: brightness(2); }
+.upBox .row.stack { flex-wrap: wrap; }
+.upBox .row.stack input { max-width: none; width: 100%; flex: 1 1 100%; min-width: 0; }
 @media (max-width: 380px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
@@ -157,6 +163,8 @@ a { color: var(--accent2); }
 </div>
 
 <button class="start" id="startBtn" disabled>Loading sounds…</button>
+<div class="marks"><button id="markBad">Sounded wrong</button><button id="markGood">Sounded great</button></div>
+<div class="load" id="markInfo">Tap a mark the moment the sound is off (or spot on). It goes into the drive log for analysis.</div>
 <div class="load" id="loadInfo"></div>
 
 <details>
@@ -200,7 +208,7 @@ a { color: var(--accent2); }
     <p><b>Sound engine.</b> Constant-RPM loops cut from the recordings every 200–300 rpm, on- and off-throttle. They're phase-aligned to the engine cycle and crossfaded by RPM and throttle. At idle, a long real idle recording plays untouched.</p>
     <p>Recordings: Ford Mustang GT500 by <a href="https://freesound.org/people/VacekH/" target="_blank" rel="noopener">VacekH</a> on Freesound (CC0). RPM was measured from the firing-order harmonics.</p>
     <p>Idle recording: 1964 Chrysler Windsor by <a href="https://freesound.org/s/240671/" target="_blank" rel="noopener">lonemonk</a> on Freesound (CC BY 4.0).</p>
-    <p>Map: © OpenStreetMap contributors. Drives are stored only on this phone.</p>
+    <p>Map: © OpenStreetMap contributors. Drives are stored on this phone, and leave it only if you turn on upload (to your own GitHub repo) or send one.</p>
     <p>Gearing: S550 Mustang GT. 10R80 ratios from Ford's chart, MT82 manual ratios from CJ Pony Parts, 255/40R19 tyres.</p>
     <p>Keep the screen on with the app open. iOS stops web audio and sensors when the screen locks.</p>
   </div>
@@ -217,6 +225,15 @@ a { color: var(--accent2); }
     </div>
     <div id="driveList"></div>
   </div>
+  <div class="idleBox upBox">
+    <h2>Send drives for analysis</h2>
+    <p>Each finished real drive (not the simulator) is uploaded to your own private GitHub repo. Claude analyses them there and suggests better settings and sound changes.</p>
+    <div class="row"><label>Upload after every drive<small>Waiting drives go up the next time the app is open with signal</small></label><input type="checkbox" id="upOn"></div>
+    <div class="row stack"><label>Repo</label><input type="text" id="upRepo" placeholder="owner/repo" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+    <div class="row stack"><label>Token<small>Fine-grained, this repo only, Contents read &amp; write. Stays on this phone.</small></label><input type="password" id="upToken" placeholder="github_pat_…" autocomplete="off"></div>
+    <div class="rowBtns"><button class="btn" id="upNow">Upload waiting drives</button></div>
+    <p class="note" id="upStatus"></p>
+  </div>
   <div id="driveDetail" class="hidden">
     <div class="metrics">
       <button class="metricBtn on" data-m="accel">Acceleration</button>
@@ -231,12 +248,15 @@ a { color: var(--accent2); }
     <div id="cursorInfo"></div>
     <div id="driveStats"></div>
     <div class="rowBtns">
+      <button class="btn" id="driveShare">Send…</button>
+      <button class="btn" id="driveUpload">Upload</button>
       <button class="btn" id="driveExport">Export JSON</button>
       <button class="btn" id="driveDelete">Delete drive</button>
     </div>
+    <p class="note" id="driveUpInfo"></p>
   </div>
 </section>
 
-<script type="module" src="app.js?v=6"></script>
+<script type="module" src="app.js?v=7"></script>
 </body>
 </html>

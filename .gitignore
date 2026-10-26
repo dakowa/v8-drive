@@ -1,3 +1,5 @@
 listen/
 .claude/
 __pycache__/
+drives/
+docs/dev/drives
