@@ -110,6 +110,9 @@ a { color: var(--accent2); }
 .rowBtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .upBox .row.stack { flex-wrap: wrap; }
 .upBox .row.stack input { max-width: none; width: 100%; flex: 1 1 100%; min-width: 0; }
+.steps { margin: 10px 0 4px; padding-left: 20px; font-size: 14px; }
+.steps li { margin: 0 0 12px; }
+.steps .btn { display: inline-block; text-decoration: none; margin: 4px 6px 0 0; }
 @media (max-width: 380px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
@@ -232,8 +235,16 @@ a { color: var(--accent2); }
     <h2>Send drives for analysis</h2>
     <p>Each finished real drive (not the simulator) is uploaded to your own private GitHub repo. Claude analyses them there and suggests better settings and sound changes.</p>
     <div class="row"><label>Upload after every drive<small>Waiting drives go up the next time the app is open with signal</small></label><input type="checkbox" id="upOn"></div>
-    <div class="row stack"><label>Repo</label><input type="text" id="upRepo" placeholder="owner/repo" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
-    <div class="row stack"><label>Token<small>Fine-grained, this repo only, Contents read &amp; write. Stays on this phone.</small></label><input type="password" id="upToken" placeholder="github_pat_…" autocomplete="off"></div>
+    <div id="upSetup" class="hidden">
+      <p class="note">One-time setup, about a minute. It gives this phone a key that can only add files to your private logs repo. If you open V8 Drive from a home-screen icon, do this there (it keeps its own storage).</p>
+      <ol class="steps">
+        <li><a class="btn" id="upGh" target="_blank" rel="noopener">Open GitHub</a> Name, expiry and access are filled in.</li>
+        <li>Under <b>Repository access</b> choose <b>Only select repositories</b> and pick <b id="upRepoShort">v8-drive-logs</b>. Tap <b>Generate token</b>, then <b>Copy</b>.</li>
+        <li>Back here: <button class="btn primary" id="upPaste">Paste token</button></li>
+      </ol>
+      <div class="row stack"><label>Or paste it here</label><input type="password" id="upToken" placeholder="github_pat_…" autocomplete="off"></div>
+    </div>
+    <div class="row hidden" id="upLinked"><label>Connected<small id="upRepoName"></small></label><button class="btn" id="upOff">Disconnect</button></div>
     <div class="rowBtns"><button class="btn" id="upNow">Upload waiting drives</button></div>
     <p class="note" id="upStatus"></p>
   </div>

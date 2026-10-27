@@ -1,7 +1,7 @@
 import { Fusion, Drivetrain, SimCar, DEFAULTS, TRANSMISSIONS, G } from './vehicle.js?v=11';
 import { Obd, clean } from './obd.js?v=11';
 import { Recorder, DrivesView, store, normalizeImport, exportDrive } from './drives.js?v=11';
-import { uploadCfg, saveUploadCfg, syncDrives, uploadDrive } from './upload.js?v=11';
+import { uploadCfg, saveUploadCfg, syncDrives, uploadDrive, tokenLink, checkToken } from './upload.js?v=11';
 
 const $ = (id) => document.getElementById(id);
 const VERSION = '11';   // bump with each release (also in index.html and the imports above)
@@ -428,14 +428,46 @@ function sync() {
     .catch((e) => { $('upStatus').textContent = 'Upload failed: ' + e.message; });
 }
 
+// ticking the box is all it takes once this phone has a token; without one, the box opens the
+// one-time setup (GitHub's token page pre-filled, then one Paste tap)
 function initUpload() {
-  const c = uploadCfg();
-  $('upOn').checked = c.on; $('upRepo').value = c.repo; $('upToken').value = c.token;
-  const save = () => saveUploadCfg({ on: $('upOn').checked, repo: $('upRepo').value.trim(), token: $('upToken').value.trim() });
-  $('upOn').addEventListener('change', () => { save(); sync(); });
-  $('upRepo').addEventListener('change', save);
-  $('upToken').addEventListener('change', save);
-  $('upNow').addEventListener('click', () => { save(); $('upStatus').textContent = 'Uploading…'; sync(); });
+  const show = () => {
+    const c = uploadCfg();
+    $('upOn').checked = c.on;
+    $('upSetup').classList.toggle('hidden', !c.on || !!c.token);
+    $('upLinked').classList.toggle('hidden', !c.token);
+    $('upNow').classList.toggle('hidden', !c.on || !c.token);
+    $('upRepoName').textContent = 'Uploads go to ' + c.repo;
+    $('upRepoShort').textContent = c.repo.split('/')[1];
+    $('upGh').href = tokenLink(c.repo);
+  };
+  const setToken = async (t) => {
+    t = (t || '').trim();
+    if (!/^(github_pat_|ghp_)\w{20,}$/.test(t)) {
+      $('upStatus').textContent = "That isn't a GitHub token. On GitHub, tap Copy next to the new token, then Paste here.";
+      return;
+    }
+    $('upStatus').textContent = 'Checking the token…';
+    try { await checkToken(uploadCfg().repo, t); } catch (e) { $('upStatus').textContent = e.message; return; }
+    saveUploadCfg({ ...uploadCfg(), on: true, token: t });
+    $('upToken').value = '';
+    show();
+    $('upStatus').textContent = 'Connected. Uploading…';
+    sync();
+  };
+  $('upOn').addEventListener('change', () => { saveUploadCfg({ ...uploadCfg(), on: $('upOn').checked }); show(); sync(); });
+  $('upPaste').addEventListener('click', async () => {
+    let t;
+    try { t = await navigator.clipboard.readText(); } catch (e) {
+      $('upStatus').textContent = "Couldn't read the clipboard. Paste the token into the box below instead.";
+      return;
+    }
+    setToken(t);
+  });
+  $('upToken').addEventListener('change', () => setToken($('upToken').value));
+  $('upOff').addEventListener('click', () => { saveUploadCfg({ ...uploadCfg(), token: '' }); show(); sync(); });
+  $('upNow').addEventListener('click', () => { $('upStatus').textContent = 'Uploading…'; sync(); });
+  show();
   $('driveUpload').addEventListener('click', async () => {
     if (!drivesView || !drivesView.drive) return;
     $('driveUpInfo').textContent = 'Uploading…';

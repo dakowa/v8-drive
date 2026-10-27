@@ -2,7 +2,10 @@
 // private GitHub repo (drives/<file>.json.gz), where Claude picks it up (tools/pull_drives.py).
 // The token is the user's fine-grained GitHub token (one repo, Contents read/write). It lives
 // only in this phone's localStorage under its own key, never in the settings that drives
-// record, and is sent only to api.github.com.
+// record, and is sent only to api.github.com. It can't ship inside the app: the app's code is
+// public, so anyone could read the drives with it, and GitHub revokes tokens it finds in public
+// code. Instead the app opens GitHub's token page pre-filled (tokenLink) and takes the copied
+// token with one Paste tap (checkToken).
 
 import { store, driveJson, driveFileName } from './drives.js?v=11';
 
@@ -28,6 +31,27 @@ export async function gzip(text) {
   return new Uint8Array(await new Response(s).arrayBuffer());
 }
 
+const ghHeaders = (token) => ({ Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' });
+
+// GitHub's new-token page with name, expiry (a year) and Contents read/write filled in; only the
+// repository choice can't be pre-filled
+export function tokenLink(repo) {
+  return 'https://github.com/settings/personal-access-tokens/new?' + new URLSearchParams({
+    name: 'V8 Drive uploads', description: `The V8 Drive app on my phone uploads drive logs to ${repo}`,
+    target_name: repo.split('/')[0], expires_in: '366', contents: 'write' });
+}
+
+// does this token see the repo? (throws a message saying what to fix)
+export async function checkToken(repo, token) {
+  const r = await fetch(`https://api.github.com/repos/${repo}`, { headers: ghHeaders(token) });
+  if (r.ok) return;
+  throw new Error({
+    401: 'GitHub rejected this token. Copy it again in full and paste.',
+    403: `This token has no access to ${repo}.`,
+    404: `This token can't see ${repo}. On GitHub, under Repository access, choose "Only select repositories" and pick ${repo.split('/')[1]}.`,
+  }[r.status] || `GitHub ${r.status}: try again with signal.`);
+}
+
 function b64(bytes) {
   let s = '';
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
@@ -36,20 +60,24 @@ function b64(bytes) {
 
 async function put(c, path, bytes, message) {
   const url = `https://api.github.com/repos/${c.repo}/contents/${path}`;
-  const headers = { Authorization: `Bearer ${c.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
   const body = { message, content: b64(bytes) };
-  const r = await fetch(url, { method: 'PUT', headers, body: JSON.stringify(body) });
-  // 422: the file exists. Names are unique per drive and a PUT is all-or-nothing, so an earlier
-  // attempt landed but its reply was lost (phone locked mid-upload)
-  if (r.status === 422) return;
+  const r = await fetch(url, { method: 'PUT', headers: ghHeaders(c.token), body: JSON.stringify(body) });
+  // 422 asking for a "sha": the file exists. Names are unique per drive and a PUT is
+  // all-or-nothing, so an earlier attempt landed but its reply was lost (phone locked mid-upload).
+  // Any other 422 is a real failure: the drive must stay in the queue.
+  if (r.status === 422) {
+    const t = await r.text();
+    if (t.includes('sha')) return;
+    throw new Error('GitHub 422: ' + t.slice(0, 120));
+  }
   if (!r.ok) {
-    const msg = { 401: 'token rejected', 403: 'token lacks access to this repo', 404: 'repo not found (or token lacks access)' }[r.status];
+    const msg = { 401: 'the upload token expired or was revoked. Tap Disconnect and set up again', 403: 'the token lacks access to this repo', 404: 'repo not found (or the token lacks access)' }[r.status];
     throw new Error(`GitHub ${r.status}: ${msg || (await r.text()).slice(0, 120)}`);
   }
 }
 
 export async function uploadDrive(id, appVersion, c = uploadCfg()) {
-  if (!c.token || !c.repo) throw new Error('Add the GitHub repo and token first');
+  if (!c.token || !c.repo) throw new Error('Set up "Send drives for analysis" first (Drives tab)');
   const d = await store.load(id);
   const gz = await gzip(driveJson(d, appVersion));
   const name = 'drives/' + driveFileName(d) + '.gz';
@@ -74,7 +102,8 @@ async function doSync(appVersion, activeId) {
   for (const m of await store.list()) {
     if (!m.ended && m.id !== activeId && now - (m.updatedMs || m.startedMs) > STALE_MS) await store.putMeta({ ...m, ended: true });
   }
-  if (!c.on || !c.token) return status(await store.list());
+  if (!c.on) return status(await store.list());
+  if (!c.token) return 'Needs the one-time setup above. ' + status(await store.list());
   if (!navigator.onLine) return 'Offline. Will upload later.';
   let err = '';
   for (const m of await store.list()) {
