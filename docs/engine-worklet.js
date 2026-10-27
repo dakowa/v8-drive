@@ -5,8 +5,13 @@
 //
 //  Loop bank:  constant-RPM loops cut from the recordings (on-load and off-load layers),
 //              each an integer number of cycles and phase-aligned to one reference cycle.
-//              The two loops bracketing the sound RPM are read at the shared phase and
-//              crossfaded; load crossfades the on/off layers.
+//              The loop nearest the sound RPM plays on its own (pitched by a few %); only
+//              midway between two loops are both heard, so a steady RPM is one recording, not
+//              a blend of two. Load crossfades the on/off layers.
+//              The loops are short (~0.75 s), so played straight they repeat audibly at a
+//              steady RPM. Instead the read position hops every few engine cycles to a random
+//              whole cycle of the loop (a 1.5-cycle crossfade, same crank angle), so the
+//              recorded cycles play in an ever-changing order.
 //  Idle:       at idle and while crawling, a long seamless loop of a real steady idle plays.
 //              Idle and loop bank switch with hysteresis (on engine RPM and load) and a short
 //              timed crossfade, so the sound is always one or the other, never a lingering blend.
@@ -26,6 +31,9 @@ const HI_KNEE = 5000, HI_CEIL = 5600;     // above this, any pitch: the top loop
 const UP_R = 1.40, UP_LOAD = 0.30, DOWN_R = 1.30, DOWN_LOAD = 0.20;
 const FADE_UP = 0.05, FADE_DOWN = 0.30;   // s (engine in fast so pulling away bites at once)
 const IDLE_XF = 0.15;   // s, crossfade when another idle recording is picked while one plays
+const HOP_MIN = 4, HOP_SPAN = 6;   // engine cycles between hops: 4-10
+const HOP_XF = 1.5;                // engine cycles of crossfade per hop
+const NEAR = 0.3;                  // between two loops, only the middle 40% blends them
 
 class EngineSound extends AudioWorkletProcessor {
   constructor() {
@@ -36,6 +44,7 @@ class EngineSound extends AudioWorkletProcessor {
     this.gainT = 0; this.gain = 0;
     this.toBank = false; this.mix = 0;
     this.phi = 0;
+    this.off = 0; this.offOld = 0; this.hx = 0; this.nextHop = HOP_MIN;
     this.bank = null; this.I = null;
     this.idlePos = 0;
     this.Iold = null; this.oldPos = 0; this.xf = 0;
@@ -80,7 +89,14 @@ class EngineSound extends AudioWorkletProcessor {
       this.mix = Math.min(1, Math.max(0, this.mix + dMix));
       const p = this.pitch, mix = this.mix;
       const sBank = bankRpm(this.rpm, p);
-      this.phi += sBank / (120 * sampleRate);
+      const dPhi = sBank / (120 * sampleRate);
+      this.phi += dPhi;
+      if (this.phi >= this.nextHop) {
+        this.offOld = this.off;
+        this.off = Math.floor(Math.random() * 64);   // whole cycles: same crank angle, other cycle
+        this.hx = 1;
+        this.nextHop = this.phi + HOP_MIN + Math.random() * HOP_SPAN;
+      } else if (this.hx > 0) this.hx = Math.max(0, this.hx - dPhi / HOP_XF);
       let s = 0;
       if (mix > 0.001 && this.bank) s = Math.sin(mix * Math.PI / 2) * this.sampleBank(sBank);
       if (mix < 0.999 && this.I) s += Math.cos(mix * Math.PI / 2) * this.sampleIdle(Math.min(this.rpm * p, this.I.rpm * PITCH_SAFE));
@@ -111,16 +127,22 @@ class EngineSound extends AudioWorkletProcessor {
 
   // ---------------------------------------------------------------- loop bank
   sampleBank(R) {
+    const s = this.bankAt(R, this.phi + this.off);
+    if (this.hx <= 0) return s;
+    return (1 - this.hx) * s + this.hx * this.bankAt(R, this.phi + this.offOld);
+  }
+
+  bankAt(R, phi) {
     const B = this.bank;
     const w = smooth(0.04, 0.75, this.load);
     const gOn = Math.sin(w * Math.PI / 2), gOff = Math.cos(w * Math.PI / 2);
     let s = 0;
-    if (gOn > 0.001) s += gOn * this.layer(B.on, R);
-    if (gOff > 0.001) s += gOff * this.layer(B.off, R);
+    if (gOn > 0.001) s += gOn * this.layer(B.on, R, phi);
+    if (gOff > 0.001) s += gOff * this.layer(B.off, R, phi);
     return s;
   }
 
-  layer(list, R) {
+  layer(list, R, phi) {
     let lo = 0, hi = 0, x = 0;
     const last = list.length - 1;
     if (R <= list[0].rpm) { lo = hi = 0; }
@@ -128,12 +150,12 @@ class EngineSound extends AudioWorkletProcessor {
     else {
       while (hi < last && list[hi].rpm <= R) hi++;
       lo = hi - 1;
-      x = (R - list[lo].rpm) / (list[hi].rpm - list[lo].rpm);
+      x = smooth(NEAR, 1 - NEAR, (R - list[lo].rpm) / (list[hi].rpm - list[lo].rpm));
     }
     const g1 = Math.cos(x * Math.PI / 2), g2 = Math.sin(x * Math.PI / 2);
     const d = this.bank.data;
-    let s = g1 * readLoop(d, list[lo], this.phi);
-    if (hi !== lo) s += g2 * readLoop(d, list[hi], this.phi);
+    let s = g1 > 0.001 ? g1 * readLoop(d, list[lo], phi) : 0;
+    if (hi !== lo && g2 > 0.001) s += g2 * readLoop(d, list[hi], phi);
     return s;
   }
 }
