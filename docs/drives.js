@@ -292,7 +292,7 @@ export class DrivesView {
     this.shareFile = null;
     this.el.querySelector('#driveUpInfo').textContent = this.drive.uploaded ? `Uploaded as ${this.drive.uploaded}` : '';
     const d = this.drive;
-    import('./upload.js?v=10').then((u) => u.gzip(driveJson(d, this.appVersion)))
+    import('./upload.js?v=11').then((u) => u.gzip(driveJson(d, this.appVersion)))
       .then((gz) => { if (this.drive === d) this.shareFile = new File([gz], driveFileName(d) + '.gz', { type: 'application/gzip' }); })
       .catch(() => {});
     this.el.querySelector('#driveDetail').classList.remove('hidden');

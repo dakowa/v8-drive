@@ -1,0 +1,10 @@
+{
+  "name": "V8 Drive",
+  "short_name": "V8 Drive",
+  "start_url": "./#A",
+  "display": "standalone",
+  "background_color": "#0b0c0e",
+  "theme_color": "#0b0c0e",
+  "orientation": "portrait",
+  "icons": [{ "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }]
+}
