@@ -7,7 +7,7 @@
 // code. Instead the app opens GitHub's token page pre-filled (tokenLink) and takes the copied
 // token with one Paste tap (checkToken).
 
-import { store, driveJson, driveFileName } from './drives.js?v=11';
+import { store, driveJson, driveFileName } from './drives.js?v=12';
 
 const KEY = 'v8drive.upload';
 const PART = 20 * 1024 * 1024;     // bigger files go up in parts (.000, .001, ...)
