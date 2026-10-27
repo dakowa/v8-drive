@@ -17,6 +17,13 @@ How releases are made (`tools/release.sh <N>`):
 From v9 on, the release number, the asset version and the tag are the same number. Before
 that they drifted: v4 shipped as asset version 5 and v5 as asset version 6, and there is no v6.
 
+## v12 (tag v12)
+- Drive uploads: ticking "Upload after every drive" opens a one-time setup instead of silently
+  waiting for a token: GitHub's token page opens pre-filled (pick the logs repo, Generate,
+  Copy), then one Paste tap checks and saves it. After that the tickbox is all it takes.
+  The token can't be built into the app: its code is public and GitHub revokes tokens found
+  in public code.
+
 ## v11 (tag v11)
 - Steady rpm (cruising, motorway) no longer pulses: the short engine loops used to repeat
   exactly every ~0.75 s. The recorded engine cycles now play in an ever-changing order, and a
