@@ -24,8 +24,6 @@ that they drifted: v4 shipped as asset version 5 and v5 as asset version 6, and 
 - Cruising: small jitter in the throttle estimate (road, phone mount) is averaged out so the
   sound doesn't wobble between on- and off-throttle recordings; revs glide over the 1 Hz GPS
   speed corrections. Pressing or lifting still responds at once; launches are unchanged.
-- **v10 verdict:** idle, acceleration and deceleration really good; steady rpm awful
-  (oscillating, didn't sound recorded).
 
 ## v10 (tag v10)
 - Gentle pull-away: the revs ease up from idle with the pedal instead of jumping from about
@@ -40,6 +38,8 @@ that they drifted: v4 shipped as asset version 5 and v5 as asset version 6, and 
   (the recordings end near 4400), so a 6000 shift sounds like about 5500.
 - Only real drives are recorded: nothing while the simulator is on.
 - The "Sounded wrong / great" buttons are gone; say what sounded off instead.
+- **Verdict:** idle, acceleration and deceleration really good; steady rpm awful
+  (oscillating, didn't sound recorded).
 
 ## v9 (tag v9)
 - One engine pitch slider again (the v5 "Pitch test" A/B is gone). Nothing plays faster than at
