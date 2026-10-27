@@ -344,6 +344,10 @@ export class Drivetrain {
         const prev = this.prevRpm || rpmT;
         const up = lerp(0.45, 0.03, smoothstep(0.25, 0.5, pedal));
         rpm = prev + (rpmT - prev) * (1 - Math.exp(-dt / (rpmT > prev ? up : 0.18)));
+      } else if (v > 8 && this.aggr < 0.06 && this.prevRpm) {
+        // steady driving: the fused speed takes a small step at each GPS fix (1 Hz); a real
+        // engine at a steady speed doesn't, so the revs glide over those steps
+        rpm = this.prevRpm + (rpmT - this.prevRpm) * (1 - Math.exp(-dt / 0.3));
       } else {
         rpm = rpmT;
       }
@@ -401,7 +405,13 @@ export class Drivetrain {
     // below ~20 km/h, smooth the throttle so road bumps don't flutter the sound between idle and engine
     // (only easing off is smoothed: pressing the pedal still bites at once)
     if (!this.shift && v < 5.5 && load < (this.loadS ?? load)) this.loadS = this.loadS + (load - this.loadS) * (1 - Math.exp(-dt / 0.25));
-    else this.loadS = load;
+    else if (!this.shift && v > 8 && this.loadS !== undefined) {
+      // cruising: phone/road jitter in the throttle estimate would wobble the sound between the
+      // on- and off-load recordings; small changes are averaged (0.6 s), a real press or lift
+      // (a change of 0.25 or more) still comes through at once
+      const tau = lerp(0.6, 0.03, smoothstep(0.08, 0.25, Math.abs(load - this.loadS)));
+      this.loadS += (load - this.loadS) * (1 - Math.exp(-dt / tau));
+    } else this.loadS = load;
     load = this.loadS;
     this.rate = (rpm - this.prevRpm) / dt;
     this.prevRpm = rpm;
