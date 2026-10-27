@@ -17,6 +17,16 @@ How releases are made (`tools/release.sh <N>`):
 From v9 on, the release number, the asset version and the tag are the same number. Before
 that they drifted: v4 shipped as asset version 5 and v5 as asset version 6, and there is no v6.
 
+## v11 (tag v11)
+- Steady rpm (cruising, motorway) no longer pulses: the short engine loops used to repeat
+  exactly every ~0.75 s. The recorded engine cycles now play in an ever-changing order, and a
+  steady rpm plays one recording instead of a blend of two.
+- Cruising: small jitter in the throttle estimate (road, phone mount) is averaged out so the
+  sound doesn't wobble between on- and off-throttle recordings; revs glide over the 1 Hz GPS
+  speed corrections. Pressing or lifting still responds at once; launches are unchanged.
+- **v10 verdict:** idle, acceleration and deceleration really good; steady rpm awful
+  (oscillating, didn't sound recorded).
+
 ## v10 (tag v10)
 - Gentle pull-away: the revs ease up from idle with the pedal instead of jumping from about
   1000 to 1500 rpm in a tenth of a second. A firm or full throttle launches as before.
